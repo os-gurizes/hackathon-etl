@@ -12,6 +12,7 @@ from vstats.geometry.preview import render_map_svgs
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
 from vstats.metrics.build import build_stats
+from vstats.models.abilities import build_abilities
 from vstats.models.patterns import build_patterns
 from vstats.models.pressure import build_pressure
 from vstats.models.strategies import build_strategies
@@ -148,6 +149,15 @@ def pressure(database_url: DatabaseOption = DATABASE_URL) -> None:
     typer.echo("  ".join(f"{table}: {count}" for table, count in counts.items()))
 
 
+@app.command()
+def abilities(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Kills por habilidade, combos entre aliados e uso de habilidade possivelmente desnecessário (estimativas)."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        counts = build_abilities(conn)
+    typer.echo("  ".join(f"{table}: {count}" for table, count in counts.items()))
+
+
 @app.command("all")
 def run_all(
     source: Annotated[Path, typer.Argument(exists=True, help="pasta com os JSONs ou arquivo .zip")],
@@ -163,6 +173,7 @@ def run_all(
     strategies(database_url)
     patterns(database_url)
     pressure(database_url)
+    abilities(database_url)
 
 
 @app.command("export-maps")

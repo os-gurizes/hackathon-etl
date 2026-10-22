@@ -11,6 +11,7 @@ from vstats.geometry.build import build_geometry
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
 from vstats.metrics.build import build_stats
+from vstats.models.abilities import build_abilities
 from vstats.models.win_probability import FEATURES, build_dataset
 from vstats.positioning.heatmap import build_heatmaps
 from vstats.reference.resolver import load_reference
@@ -138,3 +139,22 @@ def test_win_probability_states_follow_kills_and_score(conn: psycopg.Connection,
     score_columns = [FEATURES.index("attack_score"), FEATURES.index("defense_score")]
     assert data.features[2, score_columns].tolist() == [0.0, 1.0]
     assert data.label.tolist() == [1, 1, 0, 0]
+
+
+def test_abilities_build_assist_combo_and_ability_kills(conn: psycopg.Connection, tmp_path: Path) -> None:
+    rounds = [
+        round_result(0, "Red", "Attacker", [
+            kill(10_000, RED[0], BLUE[0], damage_type="Ability", item="Ultimate"),
+            kill(12_000, RED[1], BLUE[1], assistants=(RED[2],)),
+        ]),
+    ]
+    folder = tmp_path / "UNIVAVA_G"
+    folder.mkdir()
+    (folder / "UNIVAVA_G_001_19-09-26_team_one_1_x_0_team_two_ascent.json").write_text(json.dumps(match(rounds, 1, 0)))
+    ingest(conn, tmp_path, load_reference())
+    counts = build_abilities(conn)
+    assert counts["ability_kills"] == 1 and counts["ability_usage"] == 10
+    kinds = dict(conn.execute("SELECT kind, sum(occurrences) FROM analytics.combos GROUP BY 1").fetchall())
+    assert kinds == {"assist": 1, "ability_followup": 1}
+    name = conn.execute("SELECT ability_name FROM analytics.ability_kills").fetchone()[0]
+    assert name == "Tormenta de Aço"
