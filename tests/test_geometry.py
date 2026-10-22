@@ -3,7 +3,14 @@ from shapely import Point
 
 from vstats.geometry.build import zone_label
 from vstats.geometry.silhouette import build_silhouette, to_svg_path
-from vstats.geometry.zones import Anchor, ZoneIndex, build_zones, cluster_anchors, site_centroids
+from vstats.geometry.zones import (
+    Anchor,
+    ZoneIndex,
+    build_zones,
+    cluster_anchors,
+    merge_duplicate_anchors,
+    site_centroids,
+)
 
 RNG = np.random.default_rng(42)
 
@@ -69,3 +76,13 @@ def test_site_centroid_is_robust_to_outliers() -> None:
     plants = [("A", 0.2, 0.2)] * 9 + [("A", 0.9, 0.9), ("B", 0.7, 0.7)]
     sites = site_centroids(plants)
     assert sites["A"] == (0.2, 0.2, 10) and sites["B"][2] == 1
+
+
+def test_callouts_at_the_same_point_become_one_zone() -> None:
+    anchors = [
+        Anchor("Clube B", "Clube", "B", 0.4, 0.4),
+        Anchor("Lojas do Meio", "Lojas", "Meio", 0.4, 0.4),
+        Anchor("Ponto A", "Ponto", "A", 0.7, 0.7),
+    ]
+    merged = merge_duplicate_anchors(anchors)
+    assert [a.name for a in merged] == ["Clube B / Lojas do Meio", "Ponto A"]
