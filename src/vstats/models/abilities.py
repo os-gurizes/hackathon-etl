@@ -68,7 +68,9 @@ COMBOS_SQL = f"""
         SELECT k.id AS kill_id, k.round_id, k.t_round_ms, k.killer_id, k.damage_type, r.match_id, m.map_id,
                s.stage_id, rp.team_id, rp.side, mp.agent_id, coalesce(-ki.victim_delta, 0) AS wp_gain,
                (r.winner_team_id = rp.team_id) AS won,
-               CASE WHEN rp.side = 'attack' THEN r.plant_time_ms > k.t_round_ms
+               CASE WHEN rp.side = 'attack'
+                    THEN coalesce(r.plant_time_ms > k.t_round_ms, false)
+                         OR (r.plant_time_ms <= k.t_round_ms AND r.winner_team_id = rp.team_id)
                     ELSE r.winner_team_id = rp.team_id AND (r.plant_time_ms IS NULL OR r.defuser_id IS NOT NULL)
                END AS site_control
         FROM analytics.kills k
@@ -90,13 +92,14 @@ COMBOS_SQL = f"""
         WHERE mpa.team_id = c.team_id
     ),
     followups AS (
-        SELECT b.team_id, b.map_id, b.stage_id, b.side, 'ability_followup' AS kind, a.killer_id AS player_a,
+        SELECT DISTINCT ON (a.killer_id, b.kill_id) b.team_id, b.map_id, b.stage_id, b.side, 'ability_followup' AS kind, a.killer_id AS player_a,
                b.killer_id AS player_b, a.agent_id AS agent_a, b.agent_id AS agent_b,
                b.wp_gain, b.site_control, b.won
         FROM ctx a
         JOIN ctx b ON b.round_id = a.round_id AND b.team_id = a.team_id AND b.killer_id <> a.killer_id
                   AND b.t_round_ms > a.t_round_ms AND b.t_round_ms - a.t_round_ms <= {FOLLOWUP_WINDOW_MS}
         WHERE a.damage_type = 'Ability'
+        ORDER BY a.killer_id, b.kill_id
     )
     SELECT team_id, map_id, stage_id, side, kind, player_a, player_b, agent_a, agent_b,
            count(*), sum(wp_gain), count(*) FILTER (WHERE site_control), count(*) FILTER (WHERE won)

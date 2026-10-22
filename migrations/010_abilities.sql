@@ -44,7 +44,7 @@ CREATE TABLE combos (
     occurrences     integer NOT NULL,
     wp_gain         real NOT NULL,
     site_control    integer NOT NULL,
-    rounds_won      integer NOT NULL,
+    occurrences_won integer NOT NULL,
     PRIMARY KEY (team_id, map_id, stage_id, side, kind, player_a, player_b, agent_a, agent_b)
 );
 
