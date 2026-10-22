@@ -1,0 +1,39 @@
+# vstats ETL
+
+Ingestão e análise das partidas. O planejamento completo está em `docs/plano.md`.
+
+## Setup
+
+```
+uv sync
+createdb vstats
+```
+
+`VSTATS_DATABASE_URL` define o banco (padrão `postgresql:///vstats`).
+
+## Comandos
+
+```
+uv run vstats ingest <dataset.zip ou pasta>   # pode repetir sem duplicar
+uv run vstats quality                      # relatório de qualidade do último run
+uv run vstats migrate
+```
+
+## Testes
+
+```
+createdb vstats_test
+uv run pytest
+```
+
+Os testes marcados com `db` usam `VSTATS_TEST_DATABASE_URL` (padrão `postgresql:///vstats_test`) e são pulados se o banco não existir.
+
+## Referências estáticas (`reference/`)
+
+| Arquivo | Uso |
+|---|---|
+| `valorant-api-13.08.json` | agentes, habilidades, armas, armor, calibração e callouts dos mapas |
+| `gist-uuids.json` | fallback de nomes |
+| `overrides.json` | lacunas preenchidas à mão; tem prioridade sobre as outras fontes |
+| `team-names.json` | nome de exibição de cada time; editar à vontade e rodar o ingest de novo |
+| `zone-labels.json` | correções de nomes de zona |

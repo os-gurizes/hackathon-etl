@@ -1,0 +1,335 @@
+# Batch 1: ETL e Inteligência de Dados
+
+Pipeline em Python que lê os JSONs de partidas, normaliza tudo em Postgres e calcula as métricas, os modelos e os insights que a API (Batch 2) apenas lê.
+
+## Regras do batch
+
+- Python 3.12, gerenciado com `uv`.
+- Nenhuma chamada a APIs externas ou serviços da Riot, nem em build nem em runtime.
+- Fonte de dados exclusiva: os arquivos do dataset. Os nomes de agentes, armas e armor vêm de arquivos estáticos versionados em `reference/` (ver seção 3).
+- Idempotente: rodar duas vezes produz o mesmo banco. Upsert pela chave `matchId`.
+- Determinístico: toda etapa com aleatoriedade usa seed fixa (`SEED = 42`).
+
+## 1. Diagnóstico do dataset
+
+| Item | Valor |
+|---|---|
+| Arquivos | 336 JSONs, cerca de 194 MB, formato Riot `match-v1` |
+| Campeonatos | Rush Series Esquenta (29), Esquenta 2 (26), Inclusivo (13), Univavá C1 a C4 e Fase de Grupos (268) |
+| Rounds | 6.618 |
+| Kills | cerca de 46.700, cada um com snapshot de posição e direção da mira de todos os vivos |
+| Jogadores únicos | 413 |
+| Times (slug) | 68 |
+| Patches | 12.10 a 13.06 |
+| Mapas | Ascent, Lotus, Haven, Split, Sunset, Abyss, Summit, Breeze, Pearl, Fracture |
+
+### Particularidades que o parser precisa tratar
+
+1. **O nome do time existe só no nome do arquivo.** O padrão é `PREFIXO_NUM[letra]_DD-MM-AA_timeA_X_x_Y_timeB_mapa.json`. O lado Red ou Blue é resolvido comparando o placar do nome com `teams[].roundsWon`. Validado em 336 de 336 arquivos.
+2. **A letra depois do número identifica o mapa dentro da série.** `001a`, `001b` e `001c` formam uma MD3.
+3. **O prefixo e a pasta definem o campeonato e a etapa**: `UNIVAVA_C1` é Univavá, Classificatória 1; `UNIVAVA_G` é a Fase de Grupos.
+4. **Observadores** vêm com `teamId = "Neutral"` e `characterId = null` (22 partidas) e devem ser descartados das estatísticas.
+5. **`roundResultCode` vazio** em 97 rounds corresponde a `roundResult = "Round timer expired"`, vitória da defesa.
+6. **`ability.*Effects` vem sempre `null`.** Não existe uso de habilidade por round, só `stats.abilityCasts` por partida e kills com `damageType = "Ability"`.
+7. **As posições só aparecem em eventos**: a cada kill (`playerLocations` com `viewRadians`), no plant e no defuse. Não há rastreamento contínuo.
+8. **O jogador muda de time entre campeonatos** (22 casos). O vínculo jogador e time é por partida.
+9. **Slugs parecidos podem ser times distintos**: `ceub_octopus` e `ceub_octopus_vulgaris` se enfrentam na partida `UNIVAVA_G_002a`.
+10. **`economy.weapon` pode vir vazio** quando o jogador não tem arma no fim da compra.
+11. O ID do mapa é interno: `Jam` é Lotus, `Triad` é Haven, `Bonsai` é Split, `Juliett` é Sunset, `Infinity` é Abyss, `Plummet` é Summit, `Foxtrot` é Breeze, `Pitt` é Pearl, `Canyon` é Fracture. Ele bate 100% com o slug do arquivo.
+
+## 2. Estrutura do projeto
+
+```
+etl/
+  pyproject.toml
+  reference/
+    valorant-api-13.08.json      snapshot estático de agentes, habilidades, armas, gear e calibração de mapas
+    gist-uuids.json              base do gist NotOfficer (fallback)
+    overrides.json               lacunas preenchidas à mão
+    team-names.json              slug para nome de exibição, editável pelo time
+    zone-labels.json             nomes de callout por zona, opcional, editável
+  migrations/                    SQL versionado do schema `analytics`
+  src/vstats/
+    cli.py                       comandos: ingest, derive, model, insights, all
+    raw/                         modelos pydantic do JSON bruto e parser de nome de arquivo
+    load/                        escrita no Postgres via COPY
+    reference/                   resolução de UUID para nome
+    geometry/                    normalização de coordenadas, silhuetas e zonas
+    metrics/                     estatísticas clássicas
+    economy/
+    positioning/                 heatmaps, rotações e espaçamento
+    models/                      win probability, estratégias e padrões
+    insights/                    geração dos textos e evidências
+  tests/
+    fixtures/                    3 a 5 JSONs reduzidos
+```
+
+Dependências: `pydantic`, `polars`, `numpy`, `scipy`, `scikit-learn` (inclui HDBSCAN), `lightgbm`, `shap`, `scikit-image` (contornos), `shapely`, `psycopg[binary]`, `typer`, `pytest`.
+
+## 3. Dados de referência (estáticos)
+
+A prioridade de resolução é **overrides > snapshot valorant-api > gist**.
+
+| Fonte | Cobertura no dataset |
+|---|---|
+| Snapshot valorant-api 13.08 | 28 de 28 agentes (com função e nome das 4 habilidades), 3 de 3 armors, 20 de 24 armas, calibração (`xMultiplier`, `yMultiplier`, `xScalarToAdd`, `yScalarToAdd`) dos 10 mapas |
+| Gist NotOfficer (patch 2.00) | 14 de 28 agentes, 17 de 24 armas, 0 de 3 armors |
+| `overrides.json` | lacunas restantes, listadas abaixo |
+
+Lacunas a preencher manualmente, identificadas pelo agente que usa cada ID:
+
+| ID | Usado por | Provável |
+|---|---|---|
+| `856d9a7e-4b06-dc37-15dc-9d809c37cb90` | Chamber (481 kills) | Headhunter |
+| `39099fb5-4293-def4-1e09-2e9080ce7456` | Chamber (42 kills) | Tour de Force |
+| `95336ae4-45d4-1032-cfaf-6bad01910607` | Neon (207 kills) | Overdrive |
+| `""` em kill com `damageType = Weapon` | Chamber (169 kills) | arma de habilidade do Chamber, a confirmar |
+
+**Pendência:** confirmar nas regras do hackathon se o snapshot da valorant-api pode ser usado. Se não puder, o fallback é gist mais `overrides.json` ampliado (14 agentes e 3 armors a mais). A calibração dos mapas passa então a ser derivada só da extensão das posições (seção 5.1).
+
+Os IDs sem nome resolvido entram como `Desconhecido (<8 primeiros caracteres>)` e aparecem no relatório de qualidade.
+
+## 4. Modelo de dados (schema `analytics`)
+
+O ETL é dono do schema `analytics`. A API é dona do schema `app` (usuários e estratégias) e lê `analytics` sem escrever nele.
+
+### Dimensões
+- `tournaments(id, slug, name)`
+- `stages(id, tournament_id, slug, name, order)`
+- `series(id, stage_id, number, team_a_id, team_b_id, winner_team_id)`
+- `teams(id, slug, display_name)`
+- `players(id, puuid_hash, game_name, tag_line)`. O `puuid` original não sai do ETL; guardamos o hash SHA-256.
+- `agents(id, uuid, name, role, ability_grenade, ability_1, ability_2, ultimate)`
+- `weapons(id, uuid, name, category, cost)`
+- `maps(id, internal_name, slug, name, x_mult, y_mult, x_add, y_add, silhouette_svg, bounds)`
+
+### Fatos
+- `matches(id, match_uuid, series_id, map_id, game_version, started_at, duration_ms, red_team_id, blue_team_id, winner_team_id, red_score, blue_score, source_file)`
+- `match_players(match_id, player_id, team_id, agent_id, side_first_half, score, kills, deaths, assists, rounds_played, casts_grenade, casts_1, casts_2, casts_ult)`
+- `rounds(id, match_id, number, winner_team_id, winner_side, result_code, plant_site, plant_time_ms, planter_id, defuser_id, defuse_time_ms, plant_x, plant_y)`
+- `round_players(round_id, player_id, team_id, side, score, loadout_value, spent, remaining, weapon_id, armor_id, damage_dealt, headshots, bodyshots, legshots, survived)`
+- `kills(id, round_id, t_round_ms, t_game_ms, killer_id, victim_id, weapon_id, damage_type, ability_slot, is_secondary_fire, killer_x, killer_y, victim_x, victim_y, distance, is_first_kill, is_trade, traded_within_ms)`
+- `kill_assists(kill_id, player_id)`
+- `damage_events(round_id, dealer_id, receiver_id, damage, headshots, bodyshots, legshots)`
+- `position_samples(id, kill_id, round_id, t_round_ms, player_id, side, x, y, nx, ny, view_rad, zone_id)`. São cerca de 460 mil linhas, uma por jogador vivo em cada kill.
+
+### Derivados (preenchidos pelas etapas 5 a 9)
+- `zones`, `heatmap_cells`, `heatmap_zones`
+- `player_match_stats`, `player_aggregates`, `agent_aggregates`, `weapon_aggregates`
+- `round_economy`, `economy_flags`
+- `round_wp_events` (win probability antes e depois de cada kill)
+- `strategies`, `round_strategy`
+- `pressure_events`, `rotations`
+- `ability_proxies`
+- `insights(id, scope, scope_id, map_id, side, kind, severity, title, body, metric_value, baseline_value, sample_size, confidence, evidence_round_ids)`
+- `data_quality_report`
+
+Todo agregado tem as chaves de filtro `tournament_id`, `stage_id`, `map_id`, `side` e `team_id`, com `NULL` significando "todos". Assim a API faz só `SELECT`, sem cálculo pesado.
+
+## 5. Etapas do pipeline
+
+### 5.1 Geometria: normalização, silhuetas e zonas
+
+1. **Normalização**: `nx = y * x_mult + x_add` e `ny = x * y_mult + y_add`, levando ao espaço 0..1 do minimapa. Se o snapshot não for liberado, a normalização vira min-max por mapa usando os percentis 0,5 e 99,5 das posições.
+2. **Silhueta**:
+   - grid de ocupação 512x512 com todas as posições do mapa (snapshots de kill, plant e defuse);
+   - dilatação e fechamento morfológico;
+   - `skimage.measure.find_contours`, simplificado com Douglas-Peucker via shapely;
+   - o resultado é exportado como path SVG em `maps.silhouette_svg`.
+
+   É esse o fundo do heatmap e da prancheta do coach.
+3. **Sites**: o centróide das `plantLocation` agrupadas por `plantSite` (A, B, C) é usado como rótulo de referência no mapa.
+4. **Zonas**:
+   - **Método**: HDBSCAN sobre as posições normalizadas de cada mapa (`min_cluster_size` ajustado para ficar entre 20 e 40 zonas), seguido de diagrama de Voronoi recortado pela silhueta, para cada zona virar um polígono.
+   - **Rótulo automático**: proximidade com os sites (`A`, `B`, `C`), `Mid` para as zonas centrais entre sites, e base de ataque ou defesa a partir da posição média de cada lado nos primeiros 15 segundos de round.
+   - **Nomes de callout**: o arquivo `zone-labels.json` permite que alguém dê o nome real (por exemplo, "Heaven A") sem reprocessar o clustering.
+
+### 5.2 Estatísticas clássicas
+
+Por jogador, partida, mapa, agente e lado:
+- **ACS**: `score / rounds`.
+- **ADR**: soma de `damage` dividida pelos rounds.
+- **K/D, KDA, HS%**: `headshots / (head + body + leg)`.
+- **First kill e first death**: o menor `t_round_ms` do round.
+- **KAST**: kill, assist, sobreviveu ou foi trocado. Considera-se trocado quando o killer morre em até 5 s.
+- **Multikills** (2K a 5K) e **clutches** (1vX vencidos e disputados, X de 1 a 5).
+- **Plants e defuses.**
+- **K/D médio por partida**, além de média, mediana e desvio por jogador.
+
+Por agente: pick rate por mapa, win rate, ACS médio e K/D médio. O ranking de "agentes com melhor desempenho" usa a média bayesiana (shrinkage para a média do mapa), para não premiar agentes com 2 partidas.
+
+### 5.3 Armas
+
+Por arma, jogador e mapa:
+- kills e kills por round em que a arma foi comprada;
+- HS%;
+- distância média do kill (euclidiana entre killer e vítima, convertida para metros com o fator do mapa);
+- taxa de vitória do round em que o jogador estava com a arma;
+- custo por kill.
+
+Curvas de eficácia por faixa de distância (0 a 10 m, 10 a 20 m, 20 a 30 m, acima de 30 m).
+
+### 5.4 Economia
+
+1. **Compra do time por round**, pela soma de `loadout_value` dos 5 jogadores: Pistol (rounds 1 e 13), Eco (abaixo de 5.000), Semi-eco (5.000 a 12.000), Force ou meia compra (12.000 a 20.000), Full buy (acima de 20.000). Os limites ficam em config e são revisados com o histograma real.
+2. **Matriz de vitória por tipo de compra** (minha compra contra a do adversário) por mapa e lado.
+3. **Economia média**: loadout, gasto e saldo médios por time, jogador e round type.
+4. **Flags de tendências econômicas prejudiciais** (`economy_flags`):
+   - *Compra dessincronizada*: um ou dois jogadores fazem full buy enquanto o time ecoa, ou o contrário.
+   - *Force após perder o pistol*, quando a taxa histórica do time nessa situação está abaixo da média.
+   - *Sobrecompra no round 2 ou 14* depois de vencer o pistol.
+   - *Saldo alto parado*: o jogador termina a compra com `remaining > 3.000` num round de full buy do time.
+   - *Eco que não gera dano*: ADR do time abaixo de um limiar em rounds de eco.
+
+   Cada flag é avaliada contra a taxa de vitória esperada (seção 6.1) para medir o custo real em rounds.
+
+### 5.5 Posicionamento e heatmap
+
+1. **Células**: grid 64x64 normalizado. Para cada célula e cada combinação de filtros (mapa, lado, time, jogador, agente, campeonato), calcula:
+   - **presença**: amostras de posição;
+   - **kills**: posição do killer;
+   - **mortes**: `victim_location`;
+   - **first kills e first deaths**;
+   - **K/D local**: `kills / max(mortes, 1)`, com suavização bayesiana pela média do mapa.
+2. **Zonas**: as mesmas métricas agregadas por polígono, mais *taxa de troca* (mortes trocadas sobre o total de mortes na zona) e *tempo médio de contato*.
+3. **Formato de armazenamento**: esparso, só células com amostra. A suavização gaussiana para exibição fica no front, para o usuário poder ajustar.
+
+## 6. Modelos de machine learning
+
+### 6.1 Win probability por estado do round (base para medir impacto)
+
+- **Unidade**: cada evento de kill e o estado após ele.
+- **Features**:
+  - vivos de cada lado e a diferença numérica;
+  - soma de loadout de cada lado e tipo de compra;
+  - tempo do round;
+  - spike plantada e tempo desde o plant;
+  - site;
+  - mapa;
+  - lado;
+  - placar.
+- **Modelo**: LightGBM binário, com calibração isotônica.
+- **Validação**: GroupKFold por partida e teste de generalização deixando de fora um campeonato inteiro. Métricas: Brier e log loss, com referência mínima a regressão logística só com vivos e economia.
+- **Saída**: `round_wp_events`, com a WP antes e depois de cada kill. O **impacto** de um kill ou de uma morte é o delta de WP. Todos os insights de "piora de desempenho" são medidos em delta de WP ou em rounds perdidos, nunca em K/D isolado.
+
+### 6.2 Estratégias (clustering de setups)
+
+- **Unidade**: round e time.
+- **Features**:
+  - vetor de ocupação por zona nos primeiros snapshots do round (até o segundo kill ou 30 s);
+  - centróide e dispersão do time;
+  - tempo do primeiro contato;
+  - site do plant e tempo do plant;
+  - tipo de compra.
+- **Modelo**: um clustering por mapa e lado, com PCA seguido de HDBSCAN. Os rounds que ficam como ruído viram "Sem padrão definido".
+- **Descrição automática por regras sobre o centróide**:
+  - "Execução rápida no B com 4 jogadores" quando há plant antes de 35 s e 4 ou mais jogadores na zona B;
+  - "Default espalhado com pick pelo Mid";
+  - "Stack de 3 no A" na defesa.
+- **Métricas**: taxa de sucesso com intervalo de Wilson, frequência, sucesso contra cada setup defensivo (cruzamento ataque e defesa) e tendência ao longo do campeonato.
+- **Saída**: `strategies` e `round_strategy`. A API expõe as de maior e menor sucesso, com o tamanho de amostra.
+
+### 6.3 Comportamentos repetitivos que pioram o desempenho
+
+Extração de eventos comportamentais por jogador, mapa e lado:
+
+| Padrão | Definição | Teste |
+|---|---|---|
+| Morte recorrente na mesma zona | o jogador morre primeiro do time na zona Z em mais de N rounds | binomial contra a taxa base do mapa |
+| Duelo isolado | morte sem aliado em raio R e sem troca em 5 s | comparação com a média da função do agente |
+| Previsibilidade de rota | entropia baixa da zona de primeiro contato | percentil por função |
+| Peek sem utilitária (proxy) | first death sem nenhum cast de habilidade estimado; usa a taxa de casts por round da partida | indicativo |
+| Repetição pós-erro | o mesmo padrão aparece no round seguinte a uma morte nele | razão de recorrência |
+
+Ranking por impacto: um LightGBM prevê o delta de WP do round por jogador a partir dos padrões, e os valores SHAP indicam quais padrões mais custam. Só são publicados os padrões com amostra de pelo menos 15 rounds e p abaixo de 0,1 após correção de Benjamini-Hochberg.
+
+### 6.4 Tendências sob pressão
+
+Contextos de pressão marcados por round:
+- desvantagem numérica;
+- pós-plant;
+- clutch 1vX;
+- menos de 20 s no relógio;
+- sequência de 3 ou mais rounds perdidos;
+- match point de qualquer lado;
+- eco contra full buy.
+
+Métricas por contexto contra a referência do próprio jogador: K/D, primeira ação, sobrevivência e delta de WP.
+
+**Rotações** (`rotations`):
+- **Detecção**: um defensor sai da área de um site para a do outro entre snapshots consecutivos.
+- **Rotação sem informação**: ainda não houve kill, morte ou plant perto do site de destino, nem dano registrado contra jogadores lá. É o exemplo de "recuar de um bomb sem certeza de inimigo no outro".
+- **Resultado medido**: o site abandonado caiu nos 15 s seguintes? Taxa de rotação precoce por jogador e time, e custo em WP.
+- **Limitação**: as amostras de posição só existem em momentos de kill, então a rotação é detectada com atraso. A UI informa isso.
+
+**Decisões de clutch**:
+- **Classificação**: salvou (vivo no fim, round perdido, longe da spike), lutou ou tentou o defuse.
+- **Métrica**: taxa de acerto da decisão, contra a WP estimada no momento.
+
+### 6.5 Habilidades (proxies, sempre marcados como estimativa)
+
+Como `abilityEffects` vem nulo, todo indicador de habilidade é aproximado e leva `is_estimate = true`.
+
+- **Kills por habilidade**: `damage_type = Ability` e `ability_slot`, com o nome da habilidade vindo da referência do agente (por exemplo, "Showstopper").
+- **Combos com aliados**:
+  - **Pares**: assistente A e killer B na mesma kill.
+  - **Sequências**: kill de habilidade de A seguida de kill de B em até 3 s, ou assist de um iniciador (Sova, Fade, Skye, KAY/O, Breach, Gekko, Tejo) seguido de um kill.
+  - **Métricas**: frequência, delta de WP médio e conversão em plant ou retake no mesmo round ("domínio de bomb").
+  - **Ranking**: pares de agentes e de jogadores.
+- **Uso sem necessidade (estimado)**:
+  - casts por round da partida acima do percentil 80 do agente no mapa, sem aumento correspondente de kills, assists ou WP;
+  - ultimates gastas em rounds com WP já acima de 0,85 ou abaixo de 0,1, quando o round tem kill de ultimate.
+
+  Isso é uma regressão por partida, não por round, e a UI deve dizer isso explicitamente.
+
+## 7. Geração de insights
+
+Cada modelo grava linhas em `insights` com:
+- `kind`: `repetitive_pattern`, `economy`, `pressure`, `rotation`, `ability_estimate`, `strategy`, `weapon`, `agent`;
+- `severity` de 1 a 3, a partir do impacto em WP e da confiança;
+- `title` e `body` em português, escritos para leigos. Exemplo: "No Lotus, ao atacar, você morre primeiro no Mid A em 38% dos rounds. A média dos jogadores é 14%. Isso custa em média 0,6 round por mapa.";
+- `evidence_round_ids`, para o front poder abrir os rounds de exemplo.
+
+Os textos seguem templates fixos em `insights/templates.py`, sem LLM, com números arredondados e sem jargão estatístico (nada de "p-valor" na frase).
+
+## 8. Qualidade e validação
+
+- Relatório `data_quality_report`: arquivos ignorados, IDs sem nome, partidas com observador, rounds sem código e divergências de placar.
+- Testes:
+  - parser de nome de arquivo, todos os prefixos, incluindo `014a` e `014b`;
+  - resolução de lado Red e Blue;
+  - KAST, trade e first kill em fixture com valores calculados à mão;
+  - classificação de compra;
+  - normalização de coordenadas, com os sites caindo dentro da silhueta;
+  - ingestão repetida sem duplicar dados.
+- Sanidade: a soma das kills por jogador em `kills` é igual a `match_players.kills` em todas as partidas.
+- Modelos: as métricas de validação são registradas em `analytics.model_runs` (versão, data, métricas, seed).
+
+## 9. Entregáveis e critérios de aceite
+
+| # | Entrega | Aceite |
+|---|---|---|
+| 1 | `vstats ingest <pasta-ou-zip>` | 336 partidas carregadas, relatório de qualidade sem divergência de placar |
+| 2 | Referências resolvidas | 100% dos agentes e armors com nome; armas com no máximo os 4 IDs do override pendentes |
+| 3 | Silhuetas e zonas dos 10 mapas | SVG válido, sites A, B (e C) dentro do contorno, de 20 a 40 zonas por mapa |
+| 4 | Estatísticas clássicas e de armas | conferem com `players[].stats` (kills, deaths, assists, score) |
+| 5 | Economia e flags | histograma de loadout revisado e limites ajustados |
+| 6 | Win probability | Brier melhor que a referência logística no campeonato deixado de fora |
+| 7 | Estratégias, padrões, pressão e proxies de habilidade | tabelas preenchidas, cada linha com `sample_size` e `confidence` |
+| 8 | `insights` | ao menos 1 insight por jogador com 5 ou mais partidas |
+| 9 | `vstats all` | pipeline completo em menos de 10 min numa máquina comum |
+
+## 10. Ordem de execução sugerida
+
+1. Parser, schema, ingestão e qualidade (entregas 1 e 2). Isso destrava o Batch 2.
+2. Geometria e heatmap (3). Isso destrava as telas de mapa do Batch 3.
+3. Estatísticas, armas e economia (4 e 5).
+4. Win probability (6).
+5. Estratégias, padrões, pressão e habilidades (7).
+6. Insights (8) e otimização (9).
+
+## Contrato com o Batch 2
+
+- O schema `analytics` é publicado em `migrations/` e não muda sem bump de versão.
+- A API gera os tipos Drizzle com `drizzle-kit pull` apenas desse schema.
+- Toda tabela derivada tem uma coluna `pipeline_version`.
