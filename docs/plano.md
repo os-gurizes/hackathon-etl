@@ -149,7 +149,7 @@ Por jogador, partida, mapa, agente e lado:
 - **K/D, KDA, HS%**: `headshots / (head + body + leg)`.
 - **First kill e first death**: o menor `t_round_ms` do round.
 - **KAST**: kill, assist, sobreviveu ou foi trocado. Considera-se trocado quando o killer morre em até 5 s.
-- **Multikills** (2K a 5K) e **clutches** (1vX vencidos e disputados, X de 1 a 5).
+- **Multikills** (2K a 5K) e **clutches** (1vX vencidos e disputados, X de 1 a 5). A detecção para quando a spike explode ou é desarmada. Num 1v1, os dois jogadores contam como em clutch, como nos sites de estatística.
 - **Plants e defuses.**
 - **K/D médio por partida**, além de média, mediana e desvio por jogador.
 

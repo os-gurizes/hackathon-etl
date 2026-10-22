@@ -7,7 +7,15 @@ import psycopg
 from numpy.typing import NDArray
 
 from vstats.geometry.silhouette import SVG_SCALE, build_silhouette
-from vstats.geometry.zones import Anchor, Zone, ZoneIndex, build_zones, cluster_anchors, site_centroids
+from vstats.geometry.zones import (
+    Anchor,
+    Zone,
+    ZoneIndex,
+    build_zones,
+    cluster_anchors,
+    merge_duplicate_anchors,
+    site_centroids,
+)
 from vstats.reference.resolver import REFERENCE_DIR
 
 ZONE_LABELS_FILE = "zone-labels.json"
@@ -123,7 +131,7 @@ def _anchors(
         Anchor(renames.get(f"{sup}/{reg}", zone_label(reg, sup)), reg, sup, float(nx), float(ny))
         for reg, sup, nx, ny in callouts
     ]
-    return anchors, "callout"
+    return merge_duplicate_anchors(anchors), "callout"
 
 
 def _write_geometry(

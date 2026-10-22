@@ -101,22 +101,26 @@ def _round_rows(conn: psycopg.Connection) -> list[tuple]:
         "SELECT round_id, player_id, team_id FROM analytics.round_players"
     ):
         team_of[round_id][player_id] = team_id
-    winners = dict(conn.execute("SELECT id, winner_team_id FROM analytics.rounds").fetchall())
+    winners: dict[int, int] = {}
+    defused_at: dict[int, int | None] = {}
+    for round_id, winner, defuse_time in conn.execute("SELECT id, winner_team_id, defuse_time_ms FROM analytics.rounds"):
+        winners[round_id] = winner
+        defused_at[round_id] = defuse_time
     assists: dict[int, list[int]] = defaultdict(list)
     for kill_id, player_id in conn.execute("SELECT kill_id, player_id FROM analytics.kill_assists"):
         assists[kill_id].append(player_id)
     kills: dict[int, list[KillEvent]] = defaultdict(list)
     for row in conn.execute(
         """SELECT id, round_id, seq, killer_id, victim_id, kind, damage_type, is_first_kill, is_trade,
-                  traded_after_ms IS NOT NULL
+                  traded_after_ms IS NOT NULL, t_round_ms
            FROM analytics.kills ORDER BY round_id, seq"""
     ):
-        kill_id, round_id, *fields = row
-        kills[round_id].append(KillEvent(*fields, assistants=tuple(assists[kill_id])))
+        kill_id, round_id, *fields, t_round_ms = row
+        kills[round_id].append(KillEvent(*fields, assistants=tuple(assists[kill_id]), t_round_ms=t_round_ms))
 
     rows = []
     for round_id, teams in team_of.items():
-        for s in round_player_stats(teams, winners[round_id], kills[round_id]):
+        for s in round_player_stats(teams, winners[round_id], kills[round_id], defused_at[round_id]):
             rows.append((
                 round_id, s.player_id, s.kills, s.deaths, s.assists, s.kast, s.first_kill, s.first_death,
                 s.trade_kills, s.traded_death, s.clutch_size, s.clutch_won,
