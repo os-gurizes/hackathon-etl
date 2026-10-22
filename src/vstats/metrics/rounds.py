@@ -13,6 +13,7 @@ class KillEvent:
     is_trade: bool
     traded: bool
     assistants: tuple[int, ...]
+    t_round_ms: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,12 +31,14 @@ class RoundPlayerStats:
     clutch_won: bool | None
 
 
-def clutches(team_of: dict[int, int], kills: list[KillEvent]) -> dict[int, int]:
+def clutches(team_of: dict[int, int], kills: list[KillEvent], round_end_ms: int | None = None) -> dict[int, int]:
     alive: dict[int, set[int]] = defaultdict(set)
     for player, team in team_of.items():
         alive[team].add(player)
     found: dict[int, int] = {}
     for kill in sorted(kills, key=lambda k: k.seq):
+        if kill.damage_type == "Bomb" or (round_end_ms is not None and kill.t_round_ms > round_end_ms):
+            break
         team = team_of.get(kill.victim_id)
         if team is None:
             continue
@@ -49,7 +52,7 @@ def clutches(team_of: dict[int, int], kills: list[KillEvent]) -> dict[int, int]:
 
 
 def round_player_stats(
-    team_of: dict[int, int], winner_team: int, kills: list[KillEvent]
+    team_of: dict[int, int], winner_team: int, kills: list[KillEvent], round_end_ms: int | None = None
 ) -> list[RoundPlayerStats]:
     counted_kills: dict[int, int] = defaultdict(int)
     trade_kills: dict[int, int] = defaultdict(int)
@@ -75,7 +78,7 @@ def round_player_stats(
         if kill.is_first_kill:
             first_killer, first_victim = kill.killer_id, kill.victim_id
 
-    clutch = clutches(team_of, kills)
+    clutch = clutches(team_of, kills, round_end_ms)
     return [
         RoundPlayerStats(
             player_id=player,

@@ -149,7 +149,7 @@ Por jogador, partida, mapa, agente e lado:
 - **K/D, KDA, HS%**: `headshots / (head + body + leg)`.
 - **First kill e first death**: o menor `t_round_ms` do round.
 - **KAST**: kill, assist, sobreviveu ou foi trocado. Considera-se trocado quando o killer morre em até 5 s.
-- **Multikills** (2K a 5K) e **clutches** (1vX vencidos e disputados, X de 1 a 5).
+- **Multikills** (2K a 5K) e **clutches** (1vX vencidos e disputados, X de 1 a 5). A detecção para quando a spike explode ou é desarmada. Num 1v1, os dois jogadores contam como em clutch, como nos sites de estatística.
 - **Plants e defuses.**
 - **K/D médio por partida**, além de média, mediana e desvio por jogador.
 
@@ -169,18 +169,12 @@ Curvas de eficácia por faixa de distância (0 a 10 m, 10 a 20 m, 20 a 30 m, aci
 ### 5.4 Economia
 
 1. **Compra do time por round**, pela soma de `loadout_value` dos 5 jogadores: Pistol (rounds 1 e 13), Eco (abaixo de 6.000), Semi-eco (6.000 a 12.000), Meia compra (12.000 a 20.000), Full buy (20.000 ou mais). Os limites saíram do histograma real: a taxa de vitória salta de cerca de 25% para mais de 55% entre 12 e 14 mil.
-2. **Matriz de vitória por tipo de compra** (minha compra contra a do adversário). Cada round do time guarda `expected_win`, a taxa da matriz para aquele confronto de compras.
+2. **Matriz de vitória por tipo de compra** (minha compra contra a do adversário). Cada round do time guarda `expected_win`: a taxa da matriz para aquele confronto, calculada sem o próprio round. Se o confronto tem menos de 10 rounds, usa a taxa geral daquela compra.
 3. **Economia média**: loadout, gasto e saldo por time e round, em `round_team_economy`.
-4. **Flags** (`economy_flags`), cada um com `won` e `expected_win` para medir o custo em rounds:
-   - `broken_economy`: perdeu a meia compra e jogou o round seguinte em eco ou semi-eco. É o flag de maior custo no dataset (274 casos, cerca de 90 rounds abaixo do esperado). O esperado é a taxa de um full buy contra a mesma compra do adversário.
-   - `eco_without_damage`: eco com menos de 250 de dano do time.
-   - `full_buy_lost_to_eco`: derrota com compra completa contra eco.
-   - `buy_out_of_sync`: jogador comprou completo com o time em eco ou semi-eco.
-   - `saved_while_team_bought`: jogador guardou dinheiro com o time em full buy.
-   - `did_not_drop`: jogador com saldo de 3.000 ou mais enquanto um aliado jogou sem arma.
-   - `force_after_pistol_loss`: forçou a compra depois de perder o pistol.
-
-   Nem todo flag é prejudicial no dataset (`buy_out_of_sync` e `force_after_pistol_loss` vencem acima do esperado). A etapa de insights só publica como alerta os que têm custo positivo para o time ou o jogador.
+4. **Flags** (`economy_flags`, só rounds regulamentares, sem overtime):
+   - `broken_economy`: perdeu a meia compra e jogou o round seguinte em eco ou semi-eco (273 casos). `won` e `expected_win` são do round seguinte, com a compra que o time realmente fez. No dataset, a diferença é zero: o time vence o que se espera de um eco. Por isso o flag é descritivo, e o alerta vem da frequência (o time cai nisso mais que a média?), não do custo.
+   - `eco_without_damage` e `full_buy_lost_to_eco`: verdadeiros por definição em rounds perdidos, então `won` contra `expected_win` não mede custo. Também são avaliados pela frequência contra a média.
+   - `buy_out_of_sync`, `saved_while_team_bought`, `did_not_drop`, `force_after_pistol_loss`: decisões do jogador ou do time, avaliadas por `won` contra `expected_win`. No dataset, nenhuma tem custo positivo relevante.
 
 ### 5.5 Posicionamento e heatmap
 
@@ -197,10 +191,10 @@ Curvas de eficácia por faixa de distância (0 a 10 m, 10 a 20 m, 20 a 30 m, aci
 
 ### 6.1 Win probability por estado do round (base para medir impacto)
 
-- **Unidade**: cada evento de kill e o estado após ele.
+- **Unidade**: início do round, plant, e para cada kill dois estados: logo antes (mesmos vivos, relógio do kill) e logo depois. Kills depois do defuse ou da explosão da spike não entram.
 - **Features**:
   - vivos de cada lado e a diferença numérica;
-  - soma de loadout de cada lado e tipo de compra;
+  - soma de loadout de cada lado;
   - tempo do round;
   - spike plantada e tempo desde o plant;
   - site;
@@ -208,15 +202,15 @@ Curvas de eficácia por faixa de distância (0 a 10 m, 10 a 20 m, 20 a 30 m, aci
   - lado;
   - placar.
 - **Modelo**: LightGBM binário com restrições monotônicas (mais vivos ou mais economia nunca reduz a chance do próprio lado) e regularização forte. A calibração isotônica é testada em cross-fitting e só é usada se melhorar o Brier.
-- **Validação**: GroupKFold por partida e teste deixando cada campeonato inteiro de fora, com referência mínima a regressão logística só com vivos, economia, plant e tempo. Resultado atual: Brier OOF 0,1292 contra 0,1337 da referência, e calibração dentro de 2 pontos em todas as faixas. Deixando o Univavá de fora (o treino fica com 20% dos dados), o modelo empata com a referência (0,1357 contra 0,1347). Nos demais campeonatos, ganha.
+- **Validação**: GroupKFold por partida e teste deixando cada campeonato inteiro de fora, com referência mínima a regressão logística só com vivos, economia, plant e tempo. Resultado atual (103.617 estados): Brier OOF 0,1368 contra 0,1408 da referência, e calibração dentro de 2 pontos. Deixando o Univavá de fora (o treino fica com 20% dos dados), o modelo fica um pouco atrás da referência (0,1445 contra 0,1419). Nos demais campeonatos, ganha.
 - **Saída**: `round_wp_states` (WP do ataque em cada estado, out-of-fold, para a curva da partida) e `kill_impact` (WP antes e depois de cada kill). O **impacto** de um kill ou de uma morte é o delta de WP. Todos os insights de "piora de desempenho" são medidos em delta de WP ou em rounds perdidos, nunca em K/D isolado.
 
 ### 6.2 Estratégias (clustering de setups)
 
 - **Unidade**: round e time.
-- **Features**: zona de cada jogador no setup (último snapshot até o segundo kill ou 40 s; se não houver, o primeiro snapshot do round, incluindo a posição da vítima no momento da morte), como vetor de ocupação por zona e por região (A, B, C, Meio, Base). O plant **não** entra nas features: usá-lo vazava o resultado (plantar está muito ligado a vencer), e a estratégia tem que refletir a intenção do setup.
+- **Features**: zona de cada jogador no setup (último snapshot até o segundo kill ou 40 s, incluindo a posição da vítima no momento da morte; jogador sem posição nessa janela fica de fora, para não usar posições de depois do plant), como vetor de ocupação por zona e por região (A, B, C, Meio, Base). O plant **não** entra nas features: usá-lo vazava o resultado (plantar está muito ligado a vencer), e a estratégia tem que refletir a intenção do setup.
 - **Modelo**: um clustering por mapa e lado, com PCA seguido de HDBSCAN. Os rounds que ficam como ruído viram "Sem padrão definido". Mapas com menos de 80 rounds por lado não são agrupados (Fracture e Pearl).
-- **Descrição automática**: distribuição por região (o arredondamento sempre soma o tamanho do time), zona de foco, site e mediana do tempo de plant. Exemplos: "Execução rápida no B pelo Principal B", "Stack de 3 no A, foco em Vigas A".
+- **Descrição automática**: distribuição por região (o arredondamento sempre soma o tamanho do time), zona de foco, site e mediana do tempo de plant naquele site. O site só entra no título se tiver 60% ou mais dos plants; senão o título diz "Ataque dividido entre A e B". Exemplos: "Execução rápida no B pelo Principal B", "Stack de 3 no A, foco em Vigas A".
 - **Métricas**: taxa de sucesso com intervalo de Wilson e frequência. O cruzamento ataque contra defesa e o uso por time saem de `round_strategy`.
 - **Saída**: `strategies` e `round_strategy`.
 
@@ -231,7 +225,10 @@ Por jogador, mapa e lado (mínimo de 15 rounds):
 | `repeat_after_first_death` | morre primeiro na mesma zona no round seguinte | taxa da zona no mapa e lado |
 | `predictable_route` | entropia da zona no início do round entre os 10% mais baixos da função, com first deaths acima da média | taxa de first death do mapa e lado |
 
-- **Significância**: teste binomial unilateral, com correção de Benjamini-Hochberg sobre todos os testes. É significativo se o p ajustado ficar abaixo de 0,1, a ocorrência ficar acima do esperado e o custo for positivo.
+- **Significância**: teste binomial unilateral, com correção de Benjamini-Hochberg sobre **todos** os testes elegíveis (inclusive zonas e jogadores sem nenhuma ocorrência, que entram com p = 1). O mínimo de 3 ocorrências só filtra o que é exibido. Dois níveis em `tier`:
+  - `confirmed`: p ajustado abaixo de 0,1, acima do esperado e custo positivo. No dataset, 2 padrões.
+  - `watch` ("padrão a observar"): p bruto abaixo de 0,01, pelo menos 1,5 vez o esperado e custo de meio round ou mais. No dataset, 76. A interface mostra como indício, não como fato. Com 5 a 15 partidas por jogador e mapa, poucos padrões individuais passam numa correção estrita.
+- **Rota previsível**: entropia da zona do setup (até 40 s, incluindo a posição da vítima), normalizada pelo número de zonas do mapa.
 - **Custo** (`cost_rounds`): ocorrências acima do esperado vezes a perda média de chance de vitória (do modelo 6.1) nesses eventos. A unidade é rounds.
 - Foi usado no lugar do LightGBM com SHAP previsto antes: é mais simples de explicar ("isso custa 1,5 round") e cada padrão tem a evidência dos rounds de exemplo.
 - **Saída**: `player_patterns`, com os rounds de exemplo em `evidence_round_ids`.
@@ -251,8 +248,8 @@ Métricas por contexto contra a referência do próprio jogador: K/D, primeira a
 
 **Rotações** (`rotations`):
 - **Detecção**: o jogador é visto num site e depois em outro (passar pelo Meio conta), comparando com o último site em que foi visto.
-- **Rotação sem informação**: quando ele saiu, ainda não tinha havido kill (de qualquer time) nem plant no site de destino. É o exemplo de "recuar de um bomb sem certeza de inimigo no outro".
-- **Resultado medido**: o site abandonado recebeu plant depois que o jogador saiu? Também a vitória do round. No dataset, na defesa, o site abandonado cai 2,3 vezes mais nas rotações sem informação (7,8% contra 3,4%). A vitória do round não segue a mesma direção, porque as rotações com informação acontecem quando o time já está sob pressão; por isso a métrica principal é o site abandonado.
+- **Rotação sem informação**: até ele ser visto no site de destino, não tinha havido kill (de qualquer time) nem plant lá. Se houve, a rotação é uma reação (por exemplo, retake) e conta como informada. É o exemplo de "recuar de um bomb sem certeza de inimigo no outro".
+- **Resultado medido**: o site abandonado recebeu plant depois que o jogador saiu? Também a vitória do round. No dataset, na defesa, o site abandonado cai 3,9 vezes mais nas rotações sem informação (12,1% contra 3,1%). A vitória do round não segue a mesma direção, porque as rotações com informação acontecem quando o time já está sob pressão; por isso a métrica principal é o site abandonado.
 - **Limitação**: as amostras de posição só existem em momentos de kill, então a rotação é detectada com atraso. A UI informa isso.
 
 **Decisões de clutch**:

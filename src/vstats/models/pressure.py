@@ -80,10 +80,16 @@ def detect_rotations(
             continue
         if last_site is not None and last_site[1] != region:
             t1, r1 = last_site
-            informed = any(te <= t1 and er == region for te, er in site_events)
+            informed = any(te < t and er == region for te, er in site_events)
             rotations.append((r1, region, t1, t, informed))
         last_site = (t, region)
     return rotations
+
+
+def is_match_point(own: int, opponent: int) -> bool:
+    if own >= MATCH_POINT and opponent >= MATCH_POINT:
+        return own != opponent
+    return max(own, opponent) >= MATCH_POINT
 
 
 def _enemies(alive_by_team: dict[int, int], team: int) -> int:
@@ -126,7 +132,7 @@ def build_pressure(conn: psycopg.Connection) -> dict[str, int]:
             opponent = info.defense_team if team == info.attack_team else info.attack_team
             if streak[(info.match_id, team)] >= LOSING_STREAK:
                 round_contexts[team].add("losing_streak")
-            if max(score[(info.match_id, team)], score[(info.match_id, opponent)]) >= MATCH_POINT:
+            if is_match_point(score[(info.match_id, team)], score[(info.match_id, opponent)]):
                 round_contexts[team].add("match_point")
             if buys.get((info.round_id, team)) in ("eco", "semi_eco") and buys.get((info.round_id, opponent)) == "full_buy":
                 round_contexts[team].add("eco_vs_full_buy")
@@ -142,7 +148,10 @@ def build_pressure(conn: psycopg.Connection) -> dict[str, int]:
                         exposed[player].add(context)
 
         expose(0)
+        checkpoints = sorted(t for t in (planted_at, LOW_CLOCK_MS) if t is not None)
         for kill in kills[info.round_id]:
+            while checkpoints and checkpoints[0] <= kill.t:
+                expose(checkpoints.pop(0))
             planted = planted_at is not None and planted_at <= kill.t
             victim_team = team_of.get(kill.victim)
             if victim_team is None:
@@ -151,14 +160,18 @@ def build_pressure(conn: psycopg.Connection) -> dict[str, int]:
             if kill.kind == "enemy" and kill.killer in team_of:
                 killer_team = team_of[kill.killer]
                 for context in event_contexts(before[killer_team], _enemies(before, killer_team), planted, kill.t, side_of_team[killer_team]):
+                    exposed[kill.killer].add(context)
                     event_counts[(kill.killer, context)][0] += 1
                     event_counts[(kill.killer, context)][2] += kill.killer_gain
             for context in event_contexts(before[victim_team], _enemies(before, victim_team), planted, kill.t, side_of_team[victim_team]):
-                event_counts[(kill.victim, context)][1] += 1
+                exposed[kill.victim].add(context)
+                event_counts[(kill.victim, context)][1] += int(kill.kind != "self")
                 event_counts[(kill.victim, context)][2] -= kill.killer_gain
             alive[victim_team].discard(kill.victim)
             died_at[kill.victim] = kill.t
             expose(kill.t)
+        for checkpoint in checkpoints:
+            expose(checkpoint)
 
         for player, team in team_of.items():
             side = side_of_team[team]
