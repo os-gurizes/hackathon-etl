@@ -10,6 +10,7 @@ from vstats.economy.build import build_economy
 from vstats.geometry.build import build_geometry
 from vstats.geometry.preview import render_map_svgs
 from vstats.ingest import ingest
+from vstats.insights.build import build_insights
 from vstats.load.migrate import apply_migrations
 from vstats.metrics.build import build_stats
 from vstats.models.abilities import build_abilities
@@ -158,6 +159,15 @@ def abilities(database_url: DatabaseOption = DATABASE_URL) -> None:
     typer.echo("  ".join(f"{table}: {count}" for table, count in counts.items()))
 
 
+@app.command()
+def insights(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Gera os textos de insight por jogador e por time."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        counts = build_insights(conn)
+    typer.echo("  ".join(f"{kind}: {count}" for kind, count in counts.items()))
+
+
 @app.command("all")
 def run_all(
     source: Annotated[Path, typer.Argument(exists=True, help="pasta com os JSONs ou arquivo .zip")],
@@ -174,6 +184,7 @@ def run_all(
     patterns(database_url)
     pressure(database_url)
     abilities(database_url)
+    insights(database_url)
 
 
 @app.command("export-maps")

@@ -24,7 +24,8 @@ uv run vstats strategies                   # setups de ataque e defesa agrupados
 uv run vstats patterns                     # comportamentos repetitivos por jogador
 uv run vstats pressure                     # desempenho sob pressão e rotações
 uv run vstats abilities                    # habilidades e combos (estimativas)
-uv run vstats all <dataset.zip ou pasta>   # pipeline completo
+uv run vstats insights                     # textos de insight por jogador e time
+uv run vstats all <dataset.zip ou pasta>   # pipeline completo (cerca de 1min30)
 uv run vstats export-maps mapas/           # SVG de cada mapa para revisão visual
 uv run vstats quality                      # relatório de qualidade do último run
 uv run vstats migrate
@@ -48,3 +49,19 @@ Os testes marcados com `db` usam `VSTATS_TEST_DATABASE_URL` (padrão `postgresql
 | `overrides.json` | lacunas preenchidas à mão; tem prioridade sobre as outras fontes |
 | `team-names.json` | nome de exibição de cada time; editar à vontade e rodar o ingest de novo |
 | `zone-labels.json` | renomear zonas, por mapa: `{"Ascent": {"A/Árvore": "Tree A"}}` |
+
+## Tabelas principais (schema `analytics`)
+
+| Tabela | Conteúdo |
+|---|---|
+| `matches`, `rounds`, `kills`, `round_players`, `position_samples` | dados normalizados do dataset |
+| `maps`, `zones`, `map_sites` | silhueta SVG, zonas nomeadas e sites |
+| `heatmap_cells`, `heatmap_zones` | contadores para heatmap, filtráveis por mapa, etapa, time, jogador, agente e lado |
+| `player_match_stats`, `weapon_stats`, `agent_map_stats` | estatísticas clássicas |
+| `round_team_economy`, `economy_flags` | economia e decisões econômicas |
+| `round_wp_states`, `kill_impact`, `model_runs` | chance de vitória e impacto de cada kill |
+| `strategies`, `round_strategy` | setups detectados e taxa de sucesso |
+| `player_patterns` | comportamentos repetitivos |
+| `pressure_stats`, `rotations` | pressão e rotações |
+| `ability_usage`, `ability_kills`, `combos` | habilidades (estimativas) |
+| `insights` | textos prontos para o front |
