@@ -13,6 +13,7 @@ from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
 from vstats.metrics.build import build_stats
 from vstats.models.patterns import build_patterns
+from vstats.models.pressure import build_pressure
 from vstats.models.strategies import build_strategies
 from vstats.models.win_probability import train_win_probability
 from vstats.positioning.heatmap import build_heatmaps
@@ -138,6 +139,15 @@ def patterns(database_url: DatabaseOption = DATABASE_URL) -> None:
     typer.echo("padrões significativos: " + "  ".join(f"{k}: {v}" for k, v in significant.items()))
 
 
+@app.command()
+def pressure(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Desempenho em contextos de pressão e rotações entre sites."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        counts = build_pressure(conn)
+    typer.echo("  ".join(f"{table}: {count}" for table, count in counts.items()))
+
+
 @app.command("all")
 def run_all(
     source: Annotated[Path, typer.Argument(exists=True, help="pasta com os JSONs ou arquivo .zip")],
@@ -152,6 +162,7 @@ def run_all(
     win_probability(database_url)
     strategies(database_url)
     patterns(database_url)
+    pressure(database_url)
 
 
 @app.command("export-maps")
