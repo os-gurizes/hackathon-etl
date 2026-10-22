@@ -180,19 +180,19 @@ def mark_first_kills_and_trades(kills: list[KillRecord], team_of: dict[str, str]
     enemy_kills = [kill for kill in kills if kill.kind == "enemy"]
     if enemy_kills:
         enemy_kills[0].is_first_kill = True
-    for index, later in enumerate(enemy_kills):
-        for earlier in reversed(enemy_kills[:index]):
-            if later.t_round_ms - earlier.t_round_ms > TRADE_WINDOW_MS:
-                break
+    for later in enemy_kills:
+        for earlier in enemy_kills:
+            elapsed = later.t_round_ms - earlier.t_round_ms
             avenges_teammate = (
-                earlier.killer == later.victim
+                earlier is not later
+                and 0 <= elapsed <= TRADE_WINDOW_MS
+                and earlier.killer == later.victim
                 and team_of.get(earlier.victim) == team_of.get(later.killer)
-                and earlier.traded_after_ms is None
             )
             if avenges_teammate:
                 later.is_trade = True
-                earlier.traded_after_ms = later.t_round_ms - earlier.t_round_ms
-                break
+                if earlier.traded_after_ms is None or elapsed < earlier.traded_after_ms:
+                    earlier.traded_after_ms = elapsed
 
 
 def _distance_m(a: tuple[int, int] | None, b: tuple[int, int]) -> float | None:
@@ -382,7 +382,7 @@ def transform_match(
     ]
     if not rounds:
         raise MatchError("partida sem rounds")
-    first_sides = round_sides(raw.round_results[0])
+    first_sides = round_sides(min(raw.round_results, key=lambda r: r.round_num))
 
     players: list[PlayerRecord] = []
     for player in playing:
