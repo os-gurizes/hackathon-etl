@@ -6,6 +6,7 @@ import psycopg
 import pytest
 
 from tests.factory import BLUE, RED, kill, match, round_result
+from vstats.geometry.build import build_geometry
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
 from vstats.reference.resolver import load_reference
@@ -74,3 +75,14 @@ def test_quality_report_records_broken_file(conn: psycopg.Connection, dataset: P
     ingest(conn, dataset, load_reference())
     codes = {row[0] for row in conn.execute("SELECT code FROM analytics.data_quality_report")}
     assert {"FilenameError", "timeout_rounds"} <= codes
+
+
+def test_geometry_assigns_zone_to_every_position(conn: psycopg.Connection, dataset: Path) -> None:
+    ingest(conn, dataset, load_reference())
+    [result] = build_geometry(conn)
+    assert result.zone_source == "callout" and result.zones >= 1 and result.quality == "low"
+    missing = conn.execute(
+        "SELECT count(*) FROM analytics.position_samples WHERE zone_id IS NULL OR nx IS NULL"
+    ).fetchone()[0]
+    assert missing == 0
+    assert conn.execute("SELECT count(*) FROM analytics.kills WHERE victim_zone_id IS NULL").fetchone()[0] == 0

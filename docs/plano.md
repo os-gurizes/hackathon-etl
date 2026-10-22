@@ -111,7 +111,7 @@ O ETL é dono do schema `analytics`. A API é dona do schema `app` (usuários e 
 - `kills(id, round_id, t_round_ms, t_game_ms, killer_id, victim_id, weapon_id, damage_type, ability_slot, is_secondary_fire, killer_x, killer_y, victim_x, victim_y, distance, is_first_kill, is_trade, traded_within_ms)`
 - `kill_assists(kill_id, player_id)`
 - `damage_events(round_id, dealer_id, receiver_id, damage, headshots, bodyshots, legshots)`
-- `position_samples(id, kill_id, round_id, t_round_ms, player_id, side, x, y, nx, ny, view_rad, zone_id)`. São cerca de 460 mil linhas, uma por jogador vivo em cada kill.
+- `position_samples(id, kill_id, round_id, t_round_ms, player_id, side, x, y, nx, ny, view_rad, zone_id)`. São cerca de 273 mil linhas, uma por jogador vivo com posição registrada em cada kill.
 
 ### Derivados (preenchidos pelas etapas 5 a 9)
 - `zones`, `heatmap_cells`, `heatmap_zones`
@@ -139,10 +139,7 @@ Todo agregado tem as chaves de filtro `tournament_id`, `stage_id`, `map_id`, `si
 
    É esse o fundo do heatmap e da prancheta do coach.
 3. **Sites**: o centróide das `plantLocation` agrupadas por `plantSite` (A, B, C) é usado como rótulo de referência no mapa.
-4. **Zonas**:
-   - **Método**: HDBSCAN sobre as posições normalizadas de cada mapa (`min_cluster_size` ajustado para ficar entre 20 e 40 zonas), seguido de diagrama de Voronoi recortado pela silhueta, para cada zona virar um polígono.
-   - **Rótulo automático**: proximidade com os sites (`A`, `B`, `C`), `Mid` para as zonas centrais entre sites, e base de ataque ou defesa a partir da posição média de cada lado nos primeiros 15 segundos de round.
-   - **Nomes de callout**: o arquivo `zone-labels.json` permite que alguém dê o nome real (por exemplo, "Heaven A") sem reprocessar o clustering.
+4. **Zonas**: o snapshot de referência traz os callouts oficiais de cada mapa (nome, região e posição). Cada callout vira a semente de um diagrama de Voronoi recortado pela silhueta, e cada posição recebe a zona do callout mais próximo. Os nomes ficam no formato "Árvore A", "Ladrilhos do Meio". Sem callouts (caso o snapshot não seja liberado), o fallback é KMeans com 24 zonas ("Zona 1" a "Zona 24"). O arquivo `zone-labels.json` permite renomear qualquer zona sem reprocessar.
 
 ### 5.2 Estatísticas clássicas
 
