@@ -6,9 +6,11 @@ import psycopg
 import pytest
 
 from tests.factory import BLUE, RED, kill, match, round_result
+from vstats.economy.build import build_economy
 from vstats.geometry.build import build_geometry
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
+from vstats.metrics.build import build_stats
 from vstats.positioning.heatmap import build_heatmaps
 from vstats.reference.resolver import load_reference
 
@@ -98,3 +100,30 @@ def test_heatmap_totals_match_events(conn: psycopg.Connection, dataset: Path) ->
             f"SELECT sum(presence), sum(kills), sum(deaths), sum(first_kills), sum(traded_deaths) FROM analytics.{table}"
         ).fetchone()
         assert (presence, kills, deaths, first_kills, traded) == (10, 2, 2, 2, 0)
+
+
+def test_economy_classifies_buys_and_flags_broken_economy(conn: psycopg.Connection, tmp_path: Path) -> None:
+    def team(red: int, blue: int) -> dict[str, int]:
+        return {p: red for p in RED} | {p: blue for p in BLUE}
+
+    rounds = [
+        round_result(0, "Red", "Attacker", [], loadout=team(800, 800)),
+        round_result(1, "Red", "Attacker", [], loadout=team(3900, 3000)),
+        round_result(2, "Red", "Attacker", [], loadout=team(4500, 800)),
+        round_result(3, "Red", "Attacker", [], loadout=team(4500, 4500)),
+    ]
+    folder = tmp_path / "UNIVAVA_G"
+    folder.mkdir()
+    (folder / "UNIVAVA_G_001_19-09-26_team_one_4_x_0_team_two_ascent.json").write_text(json.dumps(match(rounds, 4, 0)))
+    ingest(conn, tmp_path, load_reference())
+    build_stats(conn)
+    build_economy(conn)
+    buys = conn.execute(
+        """SELECT e.number, t.slug, e.buy_type FROM analytics.round_team_economy e
+           JOIN analytics.teams t ON t.id = e.team_id ORDER BY 1, 2"""
+    ).fetchall()
+    assert [b[2] for b in buys] == ["pistol", "pistol", "half_buy", "half_buy", "full_buy", "eco", "full_buy", "full_buy"]
+    flags = conn.execute(
+        """SELECT f.flag, t.slug, f.won FROM analytics.economy_flags f JOIN analytics.teams t ON t.id = f.team_id"""
+    ).fetchall()
+    assert ("broken_economy", "team_two", False) in flags

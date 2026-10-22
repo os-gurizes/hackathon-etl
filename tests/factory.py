@@ -53,6 +53,7 @@ def round_result(
     planter: str | None = None,
     plant_site: str = "",
     damage: dict[str, list[dict[str, Any]]] | None = None,
+    loadout: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     by_killer: dict[str, list[dict[str, Any]]] = {puuid: [] for puuid in RED + BLUE}
     for item in kills:
@@ -78,7 +79,7 @@ def round_result(
                 "damage": (damage or {}).get(puuid, []),
                 "score": 100,
                 "economy": {
-                    "loadoutValue": 3900,
+                    "loadoutValue": (loadout or {}).get(puuid, 3900),
                     "weapon": VANDAL,
                     "armor": HEAVY_ARMOR,
                     "remaining": 500,

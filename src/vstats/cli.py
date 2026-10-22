@@ -6,6 +6,7 @@ import psycopg
 import typer
 
 from vstats.config import DATABASE_URL
+from vstats.economy.build import build_economy
 from vstats.geometry.build import build_geometry
 from vstats.geometry.preview import render_map_svgs
 from vstats.ingest import ingest
@@ -93,6 +94,15 @@ def stats(database_url: DatabaseOption = DATABASE_URL) -> None:
     typer.echo("  ".join(f"{table}: {count}" for table, count in counts.items()))
 
 
+@app.command()
+def economy(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Classifica a compra de cada time por round e marca decisões econômicas prejudiciais."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        counts = build_economy(conn)
+    typer.echo("  ".join(f"{table}: {count}" for table, count in counts.items()))
+
+
 @app.command("all")
 def run_all(
     source: Annotated[Path, typer.Argument(exists=True, help="pasta com os JSONs ou arquivo .zip")],
@@ -103,6 +113,7 @@ def run_all(
     geometry(database_url)
     heatmap(database_url)
     stats(database_url)
+    economy(database_url)
 
 
 @app.command("export-maps")
