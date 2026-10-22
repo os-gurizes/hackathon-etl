@@ -7,9 +7,14 @@ import psycopg
 from numpy.typing import NDArray
 from scipy.stats import binom
 
+from vstats.models.strategies import POSITIONS_SQL, SETUP_WINDOW_MS, setup_zones
+
 MIN_ROUNDS = 15
 MIN_OCCURRENCES = 3
 ALPHA = 0.1
+WATCH_P = 0.01
+WATCH_RATIO = 1.5
+WATCH_MIN_COST = 0.5
 ISOLATION_RADIUS = 1_500
 PREDICTABLE_PERCENTILE = 10
 MAX_EVIDENCE = 8
@@ -54,12 +59,12 @@ def binomial_p(occurrences: int, trials: int, p: float) -> float:
     return float(binom.sf(occurrences - 1, trials, min(max(p, 1e-9), 1.0)))
 
 
-def normalized_entropy(zones: list[int]) -> float:
+def normalized_entropy(zones: list[int], categories: int) -> float:
     counts = Counter(zones)
-    if len(zones) < 2 or len(counts) < 2:
+    if categories < 2 or len(counts) < 2:
         return 0.0
     probs = np.array(list(counts.values())) / len(zones)
-    return float(-(probs * np.log(probs)).sum() / math.log(len(zones)))
+    return float(-(probs * np.log(probs)).sum() / math.log(categories))
 
 
 @dataclass
@@ -106,7 +111,7 @@ def _load(conn: psycopg.Connection) -> tuple[dict, dict, dict, dict]:
     return rounds_of, role_of, round_order, deaths
 
 
-def _first_death_zone(rounds_of: dict, deaths: dict) -> list[Finding]:
+def _first_death_zone(rounds_of: dict, deaths: dict, zones_by_map: dict[int, int]) -> tuple[list[Finding], int]:
     totals: Counter[tuple[int, str]] = Counter()
     zone_counts: Counter[tuple[int, str, int]] = Counter()
     for (player, map_id, side), rids in rounds_of.items():
@@ -115,29 +120,28 @@ def _first_death_zone(rounds_of: dict, deaths: dict) -> list[Finding]:
         for d in items:
             if d.first and d.zone_id is not None:
                 zone_counts[(map_id, side, d.zone_id)] += 1
-    findings = []
-    for key, items in deaths.items():
+    findings, untested = [], 0
+    for key, rids in rounds_of.items():
         player, map_id, side = key
-        n = len(rounds_of[key])
+        n = len(rids)
         if n < MIN_ROUNDS:
             continue
         by_zone: dict[int, list[Death]] = defaultdict(list)
-        for d in items:
+        for d in deaths.get(key, []):
             if d.first and d.zone_id is not None:
                 by_zone[d.zone_id].append(d)
+        untested += max(zones_by_map.get(map_id, 0) - len(by_zone), 0)
         for zone, events in by_zone.items():
             p0 = zone_counts[(map_id, side, zone)] / totals[(map_id, side)]
-            if len(events) < MIN_OCCURRENCES:
-                continue
             expected = n * p0
             loss = float(np.mean([e.wp_loss for e in events]))
             findings.append(Finding(player, map_id, side, "first_death_zone", zone, n, len(events), expected, p0,
                                     binomial_p(len(events), n, p0), (len(events) - expected) * loss,
                                     [e.round_id for e in events]))
-    return findings
+    return findings, untested
 
 
-def _isolated_deaths(rounds_of: dict, role_of: dict, deaths: dict) -> list[Finding]:
+def _isolated_deaths(rounds_of: dict, role_of: dict, deaths: dict) -> tuple[list[Finding], int]:
     def group(key: tuple[int, int, str]) -> tuple[str, int, str]:
         return role_of[key], key[1], key[2]
 
@@ -147,12 +151,15 @@ def _isolated_deaths(rounds_of: dict, role_of: dict, deaths: dict) -> list[Findi
         role_rounds[group(key)] += len(rids)
     for key, items in deaths.items():
         role_isolated[group(key)] += sum(1 for d in items if not d.supported and not d.traded)
-    findings = []
-    for key, items in deaths.items():
+    findings, untested = [], 0
+    for key, rids in rounds_of.items():
         player, map_id, side = key
-        n = len(rounds_of[key])
-        events = [d for d in items if not d.supported and not d.traded]
-        if n < MIN_ROUNDS or len(events) < MIN_OCCURRENCES:
+        n = len(rids)
+        if n < MIN_ROUNDS:
+            continue
+        events = [d for d in deaths.get(key, []) if not d.supported and not d.traded]
+        if not events:
+            untested += 1
             continue
         p0 = role_isolated[group(key)] / role_rounds[group(key)]
         expected = n * p0
@@ -160,10 +167,10 @@ def _isolated_deaths(rounds_of: dict, role_of: dict, deaths: dict) -> list[Findi
         findings.append(Finding(player, map_id, side, "isolated_death", None, n, len(events), expected, p0,
                                 binomial_p(len(events), n, p0), (len(events) - expected) * loss,
                                 [e.round_id for e in events]))
-    return findings
+    return findings, untested
 
 
-def _repeat_after_first_death(rounds_of: dict, round_order: dict, deaths: dict) -> list[Finding]:
+def _repeat_after_first_death(rounds_of: dict, round_order: dict, deaths: dict) -> tuple[list[Finding], int]:
     zone_rate: Counter[tuple[int, str, int]] = Counter()
     totals: Counter[tuple[int, str]] = Counter()
     for (player, map_id, side), rids in rounds_of.items():
@@ -172,11 +179,13 @@ def _repeat_after_first_death(rounds_of: dict, round_order: dict, deaths: dict) 
         for d in items:
             if d.first and d.zone_id is not None:
                 zone_rate[(map_id, side, d.zone_id)] += 1
-    findings = []
-    for key, items in deaths.items():
+    findings, untested = [], 0
+    for key, rids in rounds_of.items():
         player, map_id, side = key
-        first = {round_order[d.round_id]: d for d in items if d.first and d.zone_id is not None}
-        played = {round_order[r] for r in rounds_of[key]}
+        if len(rids) < MIN_ROUNDS:
+            continue
+        first = {round_order[d.round_id]: d for d in deaths.get(key, []) if d.first and d.zone_id is not None}
+        played = {round_order[r] for r in rids}
         trials, repeats, expected, evidence, losses = 0, 0, 0.0, [], []
         for (match_id, number), death in first.items():
             if (match_id, number + 1) not in played:
@@ -188,29 +197,26 @@ def _repeat_after_first_death(rounds_of: dict, round_order: dict, deaths: dict) 
                 repeats += 1
                 evidence.append(following.round_id)
                 losses.append(following.wp_loss)
-        if trials < MIN_OCCURRENCES or repeats < MIN_OCCURRENCES:
+        if repeats == 0:
+            untested += int(trials > 0)
             continue
         p0 = expected / trials
         findings.append(Finding(player, map_id, side, "repeat_after_first_death", None, trials, repeats, expected, p0,
                                 binomial_p(repeats, trials, p0), (repeats - expected) * float(np.mean(losses)), evidence))
-    return findings
+    return findings, untested
 
 
 def _predictable_route(
-    conn: psycopg.Connection, rounds_of: dict, role_of: dict, deaths: dict
-) -> list[Finding]:
-    zone_samples: dict[tuple[int, int], int] = {}
-    for row in conn.execute(
-        """SELECT DISTINCT ON (ps.round_id, ps.player_id) ps.round_id, ps.player_id, ps.zone_id
-           FROM analytics.position_samples ps WHERE ps.zone_id IS NOT NULL
-           ORDER BY ps.round_id, ps.player_id, ps.t_round_ms"""
-    ):
-        zone_samples[(row[0], row[1])] = row[2]
+    conn: psycopg.Connection, rounds_of: dict, role_of: dict, deaths: dict, zones_by_map: dict[int, int]
+) -> tuple[list[Finding], int]:
+    samples: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
+    for round_id, player_id, t, zone_id in conn.execute(POSITIONS_SQL):
+        samples[(round_id, player_id)].append((t, zone_id))
     entropy: dict[tuple[int, int, str], float] = {}
     for key, rids in rounds_of.items():
-        zones = [zone_samples[(rid, key[0])] for rid in rids if (rid, key[0]) in zone_samples]
+        zones = [z for rid in rids if (z := setup_zones(samples[(rid, key[0])], SETUP_WINDOW_MS)) is not None]
         if len(zones) >= MIN_ROUNDS:
-            entropy[key] = normalized_entropy(zones)
+            entropy[key] = normalized_entropy(zones, zones_by_map.get(key[1], 0))
     by_role: dict[str, list[float]] = defaultdict(list)
     for key, value in entropy.items():
         by_role[role_of[key]].append(value)
@@ -222,46 +228,68 @@ def _predictable_route(
         totals[(key[1], key[2])] += len(rids)
     for key, items in deaths.items():
         first_rate[(key[1], key[2])] += sum(d.first for d in items)
-    findings = []
+    findings, untested = [], 0
     for key, value in entropy.items():
         if value > thresholds[role_of[key]]:
             continue
         player, map_id, side = key
         n = len(rounds_of[key])
         firsts = [d for d in deaths.get(key, []) if d.first]
+        if not firsts:
+            untested += 1
+            continue
         p0 = first_rate[(map_id, side)] / totals[(map_id, side)]
         expected = n * p0
-        loss = float(np.mean([d.wp_loss for d in firsts])) if firsts else 0.0
+        loss = float(np.mean([d.wp_loss for d in firsts]))
         findings.append(Finding(player, map_id, side, "predictable_route", None, n, len(firsts), expected, p0,
-                                binomial_p(len(firsts), n, p0) if firsts else None,
-                                (len(firsts) - expected) * loss, [d.round_id for d in firsts]))
-    return findings
+                                binomial_p(len(firsts), n, p0), (len(firsts) - expected) * loss,
+                                [d.round_id for d in firsts]))
+    return findings, untested
+
+
+def watch_tier(f: Finding) -> str | None:
+    is_watch = (
+        f.p_value is not None
+        and f.p_value < WATCH_P
+        and f.occurrences >= WATCH_RATIO * f.expected
+        and f.cost_rounds >= WATCH_MIN_COST
+    )
+    return "watch" if is_watch else None
 
 
 def build_patterns(conn: psycopg.Connection) -> Counter[str]:
     rounds_of, role_of, round_order, deaths = _load(conn)
-    findings = (
-        _first_death_zone(rounds_of, deaths)
-        + _isolated_deaths(rounds_of, role_of, deaths)
-        + _repeat_after_first_death(rounds_of, round_order, deaths)
-        + _predictable_route(conn, rounds_of, role_of, deaths)
-    )
+    zones_by_map = dict(conn.execute("SELECT map_id, count(*) FROM analytics.zones GROUP BY 1").fetchall())
+    findings: list[Finding] = []
+    untested = 0
+    for found, extra in (
+        _first_death_zone(rounds_of, deaths, zones_by_map),
+        _isolated_deaths(rounds_of, role_of, deaths),
+        _repeat_after_first_death(rounds_of, round_order, deaths),
+        _predictable_route(conn, rounds_of, role_of, deaths, zones_by_map),
+    ):
+        findings += found
+        untested += extra
     p_values = np.array([f.p_value if f.p_value is not None else 1.0 for f in findings])
-    adjusted = benjamini_hochberg(p_values)
+    adjusted = benjamini_hochberg(np.concatenate([p_values, np.ones(untested)]))[: len(findings)]
     significant: Counter[str] = Counter()
     with conn.transaction():
         conn.execute("TRUNCATE analytics.player_patterns")
         with conn.cursor() as cur, cur.copy(
             """COPY analytics.player_patterns (player_id, map_id, side, pattern, zone_id, rounds, occurrences,
-                   expected, rate, baseline_rate, p_value, p_adjusted, cost_rounds, significant, evidence_round_ids)
+                   expected, rate, baseline_rate, p_value, p_adjusted, cost_rounds, significant, tier,
+                   evidence_round_ids)
                FROM STDIN"""
         ) as copy:
             for f, p_adj in zip(findings, adjusted, strict=True):
+                if f.occurrences < MIN_OCCURRENCES:
+                    continue
                 is_significant = bool(p_adj < ALPHA and f.occurrences > f.expected and f.cost_rounds > 0)
-                significant[f.pattern] += is_significant
+                tier = "confirmed" if is_significant else watch_tier(f)
+                significant[f"{f.pattern}:{tier}"] += tier is not None
                 copy.write_row((
                     f.player_id, f.map_id, f.side, f.pattern, f.zone_id, f.rounds, f.occurrences, f.expected,
                     f.occurrences / f.rounds, f.baseline_rate, f.p_value, float(p_adj), f.cost_rounds,
-                    is_significant, f.evidence[:MAX_EVIDENCE],
+                    is_significant, tier, f.evidence[:MAX_EVIDENCE],
                 ))
     return significant

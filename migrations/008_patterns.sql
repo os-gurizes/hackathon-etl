@@ -15,6 +15,7 @@ CREATE TABLE player_patterns (
     p_adjusted      real,
     cost_rounds     real NOT NULL,
     significant     boolean NOT NULL,
+    tier            text CHECK (tier IN ('confirmed', 'watch')),
     evidence_round_ids bigint[] NOT NULL
 );
 

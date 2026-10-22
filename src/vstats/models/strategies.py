@@ -14,6 +14,7 @@ SETUP_WINDOW_MS = 40_000
 MIN_ROUNDS_TO_CLUSTER = 80
 FAST_EXECUTE_S = 40
 SLOW_EXECUTE_S = 70
+DOMINANT_SITE_SHARE = 0.6
 REGION_WEIGHT = 2.0
 BASE_REGIONS = {"no Lado Atacante", "no Lado Defensor"}
 NOISE_INDEX = 49
@@ -54,10 +55,8 @@ def region_of(super_region: str) -> str:
 
 
 def setup_zones(samples: list[tuple[int, int]], cutoff_ms: int) -> int | None:
-    if not samples:
-        return None
     inside = [s for s in samples if s[0] <= cutoff_ms]
-    return max(inside)[1] if inside else min(samples)[1]
+    return max(inside)[1] if inside else None
 
 
 def wilson(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -150,13 +149,17 @@ def describe(members: list[TeamRound], side: str, region_of_zone: dict[int, str]
                            region_counts, top_zones, plant_sites, plant_time)
 
     plant_share = sum(plant_sites.values())
-    if plant_share < 0.4:
+    site = next(iter(plant_sites), None)
+    site_plants = [r.plant_time_ms for r in planted if r.plant_site == site]
+    if plant_share < 0.4 or site is None:
         title = f"Ataque pelo {focus} sem plant frequente"
+    elif len(site_plants) < DOMINANT_SITE_SHARE * len(planted):
+        title = f"Ataque dividido entre {' e '.join(plant_sites)} pelo {focus}"
     else:
-        site = next(iter(plant_sites))
+        site_time = median(site_plants) / 1000
         pace = (
-            "Execução rápida" if plant_time is not None and plant_time < FAST_EXECUTE_S
-            else "Default lento" if plant_time is not None and plant_time > SLOW_EXECUTE_S
+            "Execução rápida" if site_time < FAST_EXECUTE_S
+            else "Default lento" if site_time > SLOW_EXECUTE_S
             else "Ataque em ritmo médio"
         )
         title = f"{pace} no {site} pelo {focus}"

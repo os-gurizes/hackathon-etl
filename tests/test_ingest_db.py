@@ -12,7 +12,7 @@ from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
 from vstats.metrics.build import build_stats
 from vstats.models.abilities import build_abilities
-from vstats.models.win_probability import FEATURES, build_dataset
+from vstats.models.win_probability import FEATURES, build_dataset, round_end_ms
 from vstats.positioning.heatmap import build_heatmaps
 from vstats.reference.resolver import load_reference
 
@@ -135,10 +135,20 @@ def test_win_probability_states_follow_kills_and_score(conn: psycopg.Connection,
     ingest(conn, dataset, load_reference())
     data = build_dataset(conn)
     events = [(s.event, s.attack_alive, s.defense_alive) for s in data.states]
-    assert events == [("start", 5, 5), ("kill", 5, 4), ("start", 5, 5), ("kill", 5, 4)]
+    assert events == [
+        ("start", 5, 5), ("pre_kill", 5, 5), ("kill", 5, 4),
+        ("start", 5, 5), ("pre_kill", 5, 5), ("kill", 5, 4),
+    ]
+    assert data.states[1].t_round_ms == data.states[2].t_round_ms == 10_000
     score_columns = [FEATURES.index("attack_score"), FEATURES.index("defense_score")]
-    assert data.features[2, score_columns].tolist() == [0.0, 1.0]
-    assert data.label.tolist() == [1, 1, 0, 0]
+    assert data.features[3, score_columns].tolist() == [0.0, 1.0]
+    assert data.label.tolist() == [1, 1, 1, 0, 0, 0]
+
+
+def test_kills_after_the_round_ends_are_not_states() -> None:
+    assert round_end_ms(40_000, None) == 85_000
+    assert round_end_ms(40_000, 70_000) == 70_000
+    assert round_end_ms(None, None) is None
 
 
 def test_abilities_build_assist_combo_and_ability_kills(conn: psycopg.Connection, tmp_path: Path) -> None:

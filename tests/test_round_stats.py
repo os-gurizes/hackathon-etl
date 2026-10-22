@@ -5,8 +5,9 @@ TEAM_OF = {1: RED, 2: RED, 3: RED, 4: RED, 5: RED, 6: BLUE, 7: BLUE, 8: BLUE, 9:
 
 
 def kill(seq: int, killer: int | None, victim: int, *, kind: str = "enemy", damage_type: str = "Weapon",
-         first: bool = False, trade: bool = False, traded: bool = False, assistants: tuple[int, ...] = ()) -> KillEvent:
-    return KillEvent(seq, killer, victim, kind, damage_type, first, trade, traded, assistants)
+         first: bool = False, trade: bool = False, traded: bool = False, assistants: tuple[int, ...] = (),
+         t: int = 0) -> KillEvent:
+    return KillEvent(seq, killer, victim, kind, damage_type, first, trade, traded, assistants, t)
 
 
 def by_player(kills: list[KillEvent], winner: int = RED) -> dict:
@@ -52,3 +53,15 @@ def test_both_sides_can_reach_a_clutch_in_the_same_round() -> None:
     stats = by_player(kills, winner=BLUE)
     assert stats[5].clutch_size == 1 and stats[5].clutch_won is False
     assert stats[10].clutch_size == 5 and stats[10].clutch_won is True
+
+
+def test_spike_detonation_deaths_do_not_create_clutches() -> None:
+    kills = [kill(i, 6, victim) for i, victim in enumerate((1, 2))]
+    kills += [kill(2 + i, None, victim, kind="self", damage_type="Bomb") for i, victim in enumerate((3, 4))]
+    assert clutches(TEAM_OF, kills) == {}
+
+
+def test_kills_after_defuse_do_not_create_clutches() -> None:
+    kills = [kill(i, 6, victim, t=10_000 + i) for i, victim in enumerate((1, 2, 3, 4))]
+    assert clutches(TEAM_OF, kills, round_end_ms=10_002) == {}
+    assert clutches(TEAM_OF, kills) == {5: 5}

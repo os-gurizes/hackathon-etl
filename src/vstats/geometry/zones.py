@@ -43,6 +43,19 @@ def cluster_anchors(points: NDArray[np.float64]) -> list[Anchor]:
     ]
 
 
+def merge_duplicate_anchors(anchors: list[Anchor]) -> list[Anchor]:
+    merged: dict[tuple[float, float], Anchor] = {}
+    for anchor in anchors:
+        key = (round(anchor.x, 6), round(anchor.y, 6))
+        found = merged.get(key)
+        if found is None:
+            merged[key] = anchor
+        else:
+            merged[key] = Anchor(f"{found.name} / {anchor.name}", f"{found.region} / {anchor.region}",
+                                 found.super_region, found.x, found.y)
+    return list(merged.values())
+
+
 def build_zones(anchors: list[Anchor], silhouette: MultiPolygon, source: str) -> list[Zone]:
     seeds = MultiPoint([(a.x, a.y) for a in anchors])
     cells = voronoi_diagram(seeds, envelope=box(-0.5, -0.5, 1.5, 1.5))
