@@ -10,6 +10,8 @@ CAN_DROP_FROM = 3_000
 FORCE_FROM = 12_000
 HALF_ROUNDS_END = (11, 23)
 ECO_DAMAGE_BELOW = 250
+MIN_MATRIX_CELL = 10
+OVERTIME_FROM = 24
 
 BUY_TYPE = f"""
     CASE
@@ -39,11 +41,19 @@ TEAM_ECONOMY_SQL = f"""
         FROM team_round t JOIN team_round o ON o.round_id = t.round_id AND o.team_id <> t.team_id
     ),
     matrix AS (
-        SELECT buy_type, opponent_buy, avg(won::int)::real AS win_rate FROM paired GROUP BY 1, 2
+        SELECT buy_type, opponent_buy, sum(won::int) AS wins, count(*) AS n FROM paired GROUP BY 1, 2
+    ),
+    marginal AS (
+        SELECT buy_type, sum(won::int) AS wins, count(*) AS n FROM paired GROUP BY 1
     )
     SELECT p.round_id, p.team_id, p.match_id, p.map_id, p.stage_id, p.number, p.side, p.buy_type, p.opponent_buy,
-           p.loadout, p.spent, p.bank, p.damage, p.won, x.win_rate
-    FROM paired p JOIN matrix x USING (buy_type, opponent_buy)
+           p.loadout, p.spent, p.bank, p.damage, p.won,
+           CASE WHEN x.n - 1 >= {MIN_MATRIX_CELL} THEN (x.wins - p.won::int)::real / (x.n - 1)
+                ELSE (mg.wins - p.won::int)::real / greatest(mg.n - 1, 1)
+           END
+    FROM paired p
+    JOIN matrix x USING (buy_type, opponent_buy)
+    JOIN marginal mg USING (buy_type)
 """
 
 FLAGS_SQL = f"""
@@ -51,39 +61,38 @@ FLAGS_SQL = f"""
     WITH previous AS (
         SELECT e.*, lag(e.won) OVER w AS prev_won, lag(e.number) OVER w AS prev_number,
                lead(e.buy_type) OVER w AS next_buy, lead(e.opponent_buy) OVER w AS next_opponent_buy,
-               lead(e.won) OVER w AS next_won, lead(e.number) OVER w AS next_number
+               lead(e.won) OVER w AS next_won, lead(e.number) OVER w AS next_number,
+               lead(e.expected_win) OVER w AS next_expected
         FROM analytics.round_team_economy e
         WINDOW w AS (PARTITION BY e.match_id, e.team_id ORDER BY e.number)
     ),
-    full_buy_rate AS (
-        SELECT opponent_buy, avg(won::int)::real AS win_rate
-        FROM analytics.round_team_economy WHERE buy_type = 'full_buy' GROUP BY 1
+    regulation AS (
+        SELECT * FROM analytics.round_team_economy WHERE number < {OVERTIME_FROM}
     ),
     players AS (
         SELECT rp.round_id, rp.team_id, rp.player_id, rp.loadout_value, rp.remaining, e.buy_type, e.won, e.expected_win
         FROM analytics.round_players rp
-        JOIN analytics.round_team_economy e ON e.round_id = rp.round_id AND e.team_id = rp.team_id
+        JOIN regulation e ON e.round_id = rp.round_id AND e.team_id = rp.team_id
     )
     SELECT round_id, team_id, NULL::integer, 'force_after_pistol_loss', won, expected_win,
            'Forçou a compra (' || loadout || ') depois de perder o pistol'
     FROM previous
     WHERE prev_number IN {PISTOL_ROUNDS} AND prev_won = false AND loadout >= {FORCE_FROM}
     UNION ALL
-    SELECT p.round_id, p.team_id, NULL, 'broken_economy', p.next_won, f.win_rate,
+    SELECT p.round_id, p.team_id, NULL, 'broken_economy', p.next_won, p.next_expected,
            'Perdeu a meia compra e jogou o round seguinte em ' || p.next_buy
     FROM previous p
-    JOIN full_buy_rate f ON f.opponent_buy = p.next_opponent_buy
     WHERE p.buy_type = 'half_buy' AND NOT p.won AND p.next_buy IN ('eco', 'semi_eco')
-      AND p.next_number = p.number + 1 AND p.number NOT IN {HALF_ROUNDS_END}
+      AND p.next_number = p.number + 1 AND p.number NOT IN {HALF_ROUNDS_END} AND p.number < {OVERTIME_FROM} - 1
     UNION ALL
     SELECT round_id, team_id, NULL, 'eco_without_damage', won, expected_win,
            'Eco com apenas ' || damage || ' de dano do time'
-    FROM analytics.round_team_economy
+    FROM regulation
     WHERE buy_type = 'eco' AND damage < {ECO_DAMAGE_BELOW}
     UNION ALL
     SELECT round_id, team_id, NULL, 'full_buy_lost_to_eco', won, expected_win,
            'Perdeu com compra completa contra eco do adversário'
-    FROM analytics.round_team_economy
+    FROM regulation
     WHERE buy_type = 'full_buy' AND opponent_buy = 'eco' AND NOT won
     UNION ALL
     SELECT round_id, team_id, player_id, 'buy_out_of_sync', won, expected_win,

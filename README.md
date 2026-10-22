@@ -28,6 +28,8 @@ uv run vstats quality                      # relatório de qualidade do último 
 uv run vstats migrate
 ```
 
+Os passos dependem uns dos outros. Depois de um `ingest`, rode os passos seguintes (ou use `vstats all`): o ingest recria os rounds e kills, e `geometry` recria as zonas, o que apaga o heatmap por zona até rodar `heatmap` de novo.
+
 ## Testes
 
 ```

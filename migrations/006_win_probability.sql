@@ -13,7 +13,7 @@ CREATE TABLE model_runs (
 CREATE TABLE round_wp_states (
     round_id        bigint NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
     seq             smallint NOT NULL,
-    event           text NOT NULL CHECK (event IN ('start', 'kill', 'plant')),
+    event           text NOT NULL CHECK (event IN ('start', 'pre_kill', 'kill', 'plant')),
     kill_id         bigint REFERENCES kills(id) ON DELETE CASCADE,
     t_round_ms      integer NOT NULL,
     attack_alive    smallint NOT NULL,
