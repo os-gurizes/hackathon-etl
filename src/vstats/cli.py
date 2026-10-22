@@ -135,7 +135,7 @@ def patterns(database_url: DatabaseOption = DATABASE_URL) -> None:
     with psycopg.connect(database_url, autocommit=True) as conn:
         apply_migrations(conn)
         significant = build_patterns(conn)
-    typer.echo("padrões significativos: " + "  ".join(f"{k}: {v}" for k, v in significant.items()))
+    typer.echo("padrões (confirmados e a observar): " + "  ".join(f"{k}: {v}" for k, v in sorted(significant.items()) if v))
 
 
 @app.command("all")
