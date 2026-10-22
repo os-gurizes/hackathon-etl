@@ -1,0 +1,9 @@
+{
+  "agents": {},
+  "weapons": {
+    "856d9a7e-4b06-dc37-15dc-9d809c37cb90": { "name": "Headhunter", "category": "Ability", "cost": null, "verified": false },
+    "39099fb5-4293-def4-1e09-2e9080ce7456": { "name": "Tour de Force", "category": "Ability", "cost": null, "verified": false },
+    "95336ae4-45d4-1032-cfaf-6bad01910607": { "name": "Overdrive", "category": "Ability", "cost": null, "verified": false }
+  },
+  "gear": {}
+}
