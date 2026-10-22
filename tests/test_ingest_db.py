@@ -9,6 +9,7 @@ from tests.factory import BLUE, RED, kill, match, round_result
 from vstats.geometry.build import build_geometry
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
+from vstats.positioning.heatmap import build_heatmaps
 from vstats.reference.resolver import load_reference
 
 TEST_DATABASE_URL = os.environ.get("VSTATS_TEST_DATABASE_URL", "postgresql:///vstats_test")
@@ -86,3 +87,14 @@ def test_geometry_assigns_zone_to_every_position(conn: psycopg.Connection, datas
     ).fetchone()[0]
     assert missing == 0
     assert conn.execute("SELECT count(*) FROM analytics.kills WHERE victim_zone_id IS NULL").fetchone()[0] == 0
+
+
+def test_heatmap_totals_match_events(conn: psycopg.Connection, dataset: Path) -> None:
+    ingest(conn, dataset, load_reference())
+    build_geometry(conn)
+    build_heatmaps(conn)
+    for table in ("heatmap_cells", "heatmap_zones"):
+        presence, kills, deaths, first_kills, traded = conn.execute(
+            f"SELECT sum(presence), sum(kills), sum(deaths), sum(first_kills), sum(traded_deaths) FROM analytics.{table}"
+        ).fetchone()
+        assert (presence, kills, deaths, first_kills, traded) == (10, 2, 2, 2, 0)

@@ -10,6 +10,7 @@ from vstats.geometry.build import build_geometry
 from vstats.geometry.preview import render_map_svgs
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
+from vstats.positioning.heatmap import build_heatmaps
 from vstats.reference.resolver import load_reference
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -71,6 +72,26 @@ def geometry(database_url: DatabaseOption = DATABASE_URL) -> None:
             f"{r.name:<10} amostras {r.sample_size:>6}  silhueta {r.quality:<3}  "
             f"zonas {r.zones:>2} ({r.zone_source})  sites {','.join(r.sites)}"
         )
+
+
+@app.command()
+def heatmap(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Agrega presença, kills e mortes por célula e por zona."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        cells, zones = build_heatmaps(conn)
+    typer.echo(f"heatmap: {cells} linhas de célula, {zones} linhas de zona")
+
+
+@app.command("all")
+def run_all(
+    source: Annotated[Path, typer.Argument(exists=True, help="pasta com os JSONs ou arquivo .zip")],
+    database_url: DatabaseOption = DATABASE_URL,
+) -> None:
+    """Roda o pipeline completo."""
+    ingest_command(source, database_url)
+    geometry(database_url)
+    heatmap(database_url)
 
 
 @app.command("export-maps")
