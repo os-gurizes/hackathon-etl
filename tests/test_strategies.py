@@ -11,11 +11,16 @@ def team_round(zones: tuple[int, ...], *, side: str = "attack", won: bool = True
     return TeamRound(1, 1, 1, side, won, plant_site, plant_time_ms, zones)
 
 
-def test_setup_zone_uses_latest_sample_inside_window_or_first_available() -> None:
+def test_setup_zone_uses_latest_sample_inside_window_only() -> None:
     samples = [(5_000, 1), (20_000, 2), (50_000, 3)]
     assert setup_zones(samples, 30_000) == 2
-    assert setup_zones([(60_000, 3), (45_000, 4)], 30_000) == 4
+    assert setup_zones([(60_000, 3), (45_000, 4)], 30_000) is None
     assert setup_zones([], 30_000) is None
+
+
+def test_describe_split_attack() -> None:
+    members = [team_round((1, 1, 3, 3, 4), plant_site=site) for site in ("A", "B", "A", "B")]
+    assert describe(members, "attack", REGION, NAMES).title.startswith("Ataque dividido entre A e B")
 
 
 def test_apportion_keeps_team_size() -> None:

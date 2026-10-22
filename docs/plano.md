@@ -208,9 +208,9 @@ Curvas de eficácia por faixa de distância (0 a 10 m, 10 a 20 m, 20 a 30 m, aci
 ### 6.2 Estratégias (clustering de setups)
 
 - **Unidade**: round e time.
-- **Features**: zona de cada jogador no setup (último snapshot até o segundo kill ou 40 s; se não houver, o primeiro snapshot do round, incluindo a posição da vítima no momento da morte), como vetor de ocupação por zona e por região (A, B, C, Meio, Base). O plant **não** entra nas features: usá-lo vazava o resultado (plantar está muito ligado a vencer), e a estratégia tem que refletir a intenção do setup.
+- **Features**: zona de cada jogador no setup (último snapshot até o segundo kill ou 40 s, incluindo a posição da vítima no momento da morte; jogador sem posição nessa janela fica de fora, para não usar posições de depois do plant), como vetor de ocupação por zona e por região (A, B, C, Meio, Base). O plant **não** entra nas features: usá-lo vazava o resultado (plantar está muito ligado a vencer), e a estratégia tem que refletir a intenção do setup.
 - **Modelo**: um clustering por mapa e lado, com PCA seguido de HDBSCAN. Os rounds que ficam como ruído viram "Sem padrão definido". Mapas com menos de 80 rounds por lado não são agrupados (Fracture e Pearl).
-- **Descrição automática**: distribuição por região (o arredondamento sempre soma o tamanho do time), zona de foco, site e mediana do tempo de plant. Exemplos: "Execução rápida no B pelo Principal B", "Stack de 3 no A, foco em Vigas A".
+- **Descrição automática**: distribuição por região (o arredondamento sempre soma o tamanho do time), zona de foco, site e mediana do tempo de plant naquele site. O site só entra no título se tiver 60% ou mais dos plants; senão o título diz "Ataque dividido entre A e B". Exemplos: "Execução rápida no B pelo Principal B", "Stack de 3 no A, foco em Vigas A".
 - **Métricas**: taxa de sucesso com intervalo de Wilson e frequência. O cruzamento ataque contra defesa e o uso por time saem de `round_strategy`.
 - **Saída**: `strategies` e `round_strategy`.
 
