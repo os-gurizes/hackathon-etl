@@ -6,6 +6,8 @@ def number(value: float, decimals: int = 1) -> str:
 
 
 def percent(value: float) -> str:
+    if 0 < value < 0.1:
+        return f"{number(value * 100)}%"
     return f"{round(value * 100)}%"
 
 
@@ -62,22 +64,30 @@ def repeat_after_first_death(map_name: str, side: str, occurrences: int, cost: f
     )
 
 
-ECONOMY = {
+WATCH_NOTE = "Por enquanto é um indício: com mais partidas fica claro se é um padrão."
+
+TEAM_ECONOMY = {
     "broken_economy": (
         "Economia quebrada depois de meia compra",
-        "Em {n} rounds o time perdeu uma meia compra e jogou o round seguinte sem conseguir comprar completo. "
-        "O time venceu {won} desses rounds, contra {expected} esperados com compra completa. Custo estimado: {cost}.",
+        "Em {k} de {n} meias compras o time perdeu e ficou sem dinheiro para comprar completo no round seguinte "
+        "({rate}). A média dos times é {base}.",
     ),
     "eco_without_damage": (
         "Ecos sem dano",
-        "Em {n} rounds de eco o time causou menos de 250 de dano no total. Mesmo em eco, tirar vida dos "
-        "adversários ajuda o round seguinte. Custo estimado: {cost}.",
+        "Em {k} de {n} rounds de eco o time causou menos de 250 de dano no total ({rate}). A média dos times é "
+        "{base}. Mesmo em eco, tirar vida dos adversários ajuda o round seguinte.",
     ),
     "full_buy_lost_to_eco": (
         "Derrotas com compra completa contra eco",
-        "O time perdeu {n} rounds com compra completa contra eco do adversário. Esses rounds costumam ser "
-        "vencidos em {expected_rate} dos casos. Custo estimado: {cost}.",
+        "Em {k} de {n} rounds de compra completa contra eco o time perdeu ({rate}). A média dos times é {base}.",
     ),
+    "force_after_pistol_loss": (
+        "Compra forçada depois de perder o pistol",
+        "O time forçou a compra em {k} de {n} rounds depois de perder o pistol ({rate}). A média dos times é {base}.",
+    ),
+}
+
+ECONOMY = {
     "did_not_drop": (
         "Dinheiro sobrando com aliado sem arma",
         "Em {n} rounds você terminou a compra com dinheiro sobrando enquanto um aliado jogou praticamente sem "
@@ -90,10 +100,6 @@ ECONOMY = {
     "buy_out_of_sync": (
         "Compra fora do ritmo do time",
         "Em {n} rounds você comprou completo enquanto o time economizava. Custo estimado: {cost}.",
-    ),
-    "force_after_pistol_loss": (
-        "Compra forçada depois de perder o pistol",
-        "O time forçou a compra {n} vezes depois de perder o pistol. Custo estimado: {cost}.",
     ),
 }
 
@@ -164,11 +170,12 @@ def strategy(map_name: str, side: str, title: str, rate: float, rounds: int, bes
     )
 
 
-def combo(player_a: str, player_b: str, map_name: str, n: int, control: float) -> tuple[str, str]:
+def combo(player_a: str, player_b: str, map_name: str, n: int, control: float, team_control: float) -> tuple[str, str]:
     return (
         "Dupla que funciona",
-        f"No {map_name}, quando {player_a} ajuda e {player_b} finaliza, o time conquista o site em "
-        f"{percent(control)} das {n} vezes. É a combinação mais forte do time nesse mapa. Esta é uma estimativa.",
+        f"No {map_name}, quando {player_a} ajuda e {player_b} finaliza, o time domina o site em "
+        f"{percent(control)} das {n} vezes, contra {percent(team_control)} nas outras jogadas do time. "
+        f"Esta é uma estimativa.",
     )
 
 

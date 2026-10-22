@@ -7,7 +7,7 @@ CREATE TABLE insights (
     map_id              smallint REFERENCES maps(id) ON DELETE CASCADE,
     side                text CHECK (side IN ('attack', 'defense')),
     kind                text NOT NULL,
-    polarity            text NOT NULL CHECK (polarity IN ('negative', 'positive')),
+    polarity            text NOT NULL CHECK (polarity IN ('negative', 'positive', 'neutral')),
     severity            smallint NOT NULL CHECK (severity BETWEEN 1 AND 3),
     title               text NOT NULL,
     body                text NOT NULL,

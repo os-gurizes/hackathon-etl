@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import psycopg
 
 from vstats.insights import templates as t
+from vstats.models.patterns import binomial_p
 
 MIN_FLAG_ROUNDS = 3
 MIN_PRESSURE_ROUNDS = 30
@@ -44,16 +45,17 @@ class Insight:
 def _patterns(conn: psycopg.Connection) -> list[Insight]:
     rows = conn.execute(
         """SELECT pp.player_id, pp.map_id, m.name, pp.side, pp.pattern, z.name, pp.rounds, pp.occurrences, pp.rate,
-                  pp.baseline_rate, pp.cost_rounds, pp.p_adjusted, pp.evidence_round_ids,
+                  pp.baseline_rate, pp.cost_rounds, pp.p_value, pp.p_adjusted, pp.tier, pp.evidence_round_ids,
                   (SELECT count(DISTINCT s.match_id) FROM analytics.player_match_stats s
                    WHERE s.player_id = pp.player_id AND s.map_id = pp.map_id)
            FROM analytics.player_patterns pp
            JOIN analytics.maps m ON m.id = pp.map_id
            LEFT JOIN analytics.zones z ON z.id = pp.zone_id
-           WHERE pp.significant"""
+           WHERE pp.tier IS NOT NULL"""
     ).fetchall()
     insights = []
-    for player, map_id, map_name, side, pattern, zone, rounds, occ, rate, base, cost, p_adj, evidence, matches in rows:
+    for (player, map_id, map_name, side, pattern, zone, rounds, occ, rate, base, cost, p_value, p_adj, tier,
+         evidence, matches) in rows:
         if pattern == "first_death_zone":
             title, body = t.first_death_zone(map_name, side, zone, rate, base, cost, matches)
         elif pattern == "isolated_death":
@@ -62,30 +64,73 @@ def _patterns(conn: psycopg.Connection) -> list[Insight]:
             title, body = t.predictable_route(map_name, side, rate, base, cost)
         else:
             title, body = t.repeat_after_first_death(map_name, side, occ, cost)
-        insights.append(Insight("player", player, "repetitive_pattern", "negative", t.severity_for_cost(cost),
-                                title, body, rounds, 1 - p_adj, map_id, side, rate, base, False, list(evidence)))
+        confirmed = tier == "confirmed"
+        if not confirmed:
+            body = f"{body} {t.WATCH_NOTE}"
+        severity = t.severity_for_cost(cost) if confirmed else min(t.severity_for_cost(cost), 2)
+        confidence = 1 - p_adj if confirmed else min(0.5, 1 - p_value)
+        insights.append(Insight("player", player, "repetitive_pattern", "negative", severity, title, body, rounds,
+                                confidence, map_id, side, rate, base, False, list(evidence)))
     return insights
 
 
-def _economy(conn: psycopg.Connection) -> list[Insight]:
+TEAM_FLAG_OPPORTUNITIES = {
+    "broken_economy": "buy_type = 'half_buy' AND number < 23 AND number NOT IN (11, 23)",
+    "eco_without_damage": "buy_type = 'eco' AND number < 24",
+    "full_buy_lost_to_eco": "buy_type = 'full_buy' AND opponent_buy = 'eco' AND number < 24",
+    "force_after_pistol_loss": "number IN (1, 13) AND NOT prev_won",
+}
+FREQUENCY_RATIO = 1.5
+FREQUENCY_P = 0.05
+
+
+def _team_economy(conn: psycopg.Connection) -> list[Insight]:
     insights = []
-    for scope, column in (("team", "team_id"), ("player", "player_id")):
+    for flag, condition in TEAM_FLAG_OPPORTUNITIES.items():
         rows = conn.execute(
-            f"""SELECT f.{column}, f.flag, count(*), sum(f.won::int), sum(f.expected_win), avg(f.expected_win),
-                       (array_agg(f.round_id ORDER BY f.expected_win - f.won::int DESC))[1:8]
-                FROM analytics.economy_flags f
-                WHERE f.{column} IS NOT NULL AND ({'f.player_id IS NULL' if scope == 'team' else 'f.player_id IS NOT NULL'})
-                GROUP BY 1, 2
-                HAVING count(*) >= {MIN_FLAG_ROUNDS} AND sum(f.expected_win) - sum(f.won::int) > 0"""
+            f"""WITH e AS (
+                    SELECT *, lag(won) OVER (PARTITION BY match_id, team_id ORDER BY number) AS prev_won
+                    FROM analytics.round_team_economy
+                ),
+                opportunities AS (SELECT team_id, count(*) AS n FROM e WHERE {condition} GROUP BY 1),
+                flags AS (
+                    SELECT team_id, count(*) AS k, (array_agg(round_id))[1:8] AS evidence
+                    FROM analytics.economy_flags WHERE flag = %s AND player_id IS NULL GROUP BY 1
+                )
+                SELECT o.team_id, coalesce(f.k, 0), o.n, f.evidence,
+                       (SELECT sum(k) FROM flags)::real / (SELECT sum(n) FROM opportunities)
+                FROM opportunities o LEFT JOIN flags f USING (team_id)""",
+            (flag,),
         ).fetchall()
-        for scope_id, flag, n, won, expected, expected_rate, evidence in rows:
-            cost = expected - won
-            title, template = t.ECONOMY[flag]
-            body = template.format(n=n, won=won, expected=t.number(expected), expected_rate=t.percent(expected_rate),
-                                   cost=t.rounds_text(cost))
-            insights.append(Insight(scope, scope_id, "economy", "negative", t.severity_for_cost(cost), title, body,
-                                    n, min(1.0, n / 20), metric_value=won / n, baseline_value=expected_rate,
-                                    evidence=list(evidence)))
+        for team, k, n, evidence, base in rows:
+            if k < MIN_FLAG_ROUNDS or not base or k / n < FREQUENCY_RATIO * base or binomial_p(k, n, base) >= FREQUENCY_P:
+                continue
+            title, template = t.TEAM_ECONOMY[flag]
+            body = template.format(k=k, n=n, rate=t.percent(k / n), base=t.percent(base))
+            severity = 3 if k / n >= 2 * base and k >= 6 else 2
+            insights.append(Insight("team", team, "economy", "negative", severity, title, body, n,
+                                    min(1.0, n / 30), metric_value=k / n, baseline_value=base,
+                                    evidence=list(evidence or [])))
+    return insights
+
+
+def _player_economy(conn: psycopg.Connection) -> list[Insight]:
+    rows = conn.execute(
+        f"""SELECT f.player_id, f.flag, count(*), sum(f.won::int), sum(f.expected_win), avg(f.expected_win),
+                   (array_agg(f.round_id ORDER BY f.expected_win - f.won::int DESC))[1:8]
+            FROM analytics.economy_flags f
+            WHERE f.player_id IS NOT NULL
+            GROUP BY 1, 2
+            HAVING count(*) >= {MIN_FLAG_ROUNDS} AND sum(f.expected_win) - sum(f.won::int) > 0"""
+    ).fetchall()
+    insights = []
+    for player, flag, n, won, expected, expected_rate, evidence in rows:
+        cost = expected - won
+        title, template = t.ECONOMY[flag]
+        body = template.format(n=n, cost=t.rounds_text(cost))
+        insights.append(Insight("player", player, "economy", "negative", t.severity_for_cost(cost), title, body,
+                                n, min(1.0, n / 20), metric_value=won / n, baseline_value=expected_rate,
+                                evidence=list(evidence)))
     return insights
 
 
@@ -168,20 +213,29 @@ def _abilities(conn: psycopg.Connection) -> list[Insight]:
         title, body = t.ult_in_decided_rounds(decided, total)
         insights.append(Insight("player", player, "ability_estimate", "negative", 1, title, body, total,
                                 min(1.0, total / 20), metric_value=decided / total, is_estimate=True))
-    for team, map_id, map_name, a, b, n, control in conn.execute(
-        f"""SELECT DISTINCT ON (c.team_id, c.map_id) c.team_id, c.map_id, m.name, pa.game_name, pb.game_name,
-                   sum(c.occurrences), sum(c.site_control)::real / sum(c.occurrences)
-            FROM analytics.combos c
-            JOIN analytics.maps m ON m.id = c.map_id
-            JOIN analytics.players pa ON pa.id = c.player_a
-            JOIN analytics.players pb ON pb.id = c.player_b
-            GROUP BY c.team_id, c.map_id, m.name, pa.game_name, pb.game_name
-            HAVING sum(c.occurrences) >= {MIN_COMBO}
-            ORDER BY c.team_id, c.map_id, sum(c.site_control)::real / sum(c.occurrences) DESC"""
+    for team, map_id, map_name, a, b, n, control, team_control in conn.execute(
+        f"""WITH pairs AS (
+                SELECT c.team_id, c.map_id, c.player_a, c.player_b, sum(c.occurrences) AS n,
+                       sum(c.site_control)::real / sum(c.occurrences) AS control
+                FROM analytics.combos c GROUP BY 1, 2, 3, 4
+            ),
+            team AS (
+                SELECT team_id, map_id, sum(site_control)::real / sum(occurrences) AS control
+                FROM analytics.combos GROUP BY 1, 2
+            )
+            SELECT DISTINCT ON (p.team_id, p.map_id) p.team_id, p.map_id, m.name, pa.game_name, pb.game_name,
+                   p.n, p.control, tm.control
+            FROM pairs p
+            JOIN team tm USING (team_id, map_id)
+            JOIN analytics.maps m ON m.id = p.map_id
+            JOIN analytics.players pa ON pa.id = p.player_a
+            JOIN analytics.players pb ON pb.id = p.player_b
+            WHERE p.n >= {MIN_COMBO} AND p.control > tm.control
+            ORDER BY p.team_id, p.map_id, p.control DESC"""
     ):
-        title, body = t.combo(a, b, map_name, n, control)
+        title, body = t.combo(a, b, map_name, n, control, team_control)
         insights.append(Insight("team", team, "combo", "positive", 1, title, body, n, min(1.0, n / 40),
-                                map_id, metric_value=control, is_estimate=True))
+                                map_id, metric_value=control, baseline_value=team_control, is_estimate=True))
     return insights
 
 
@@ -282,9 +336,12 @@ def _fallback(conn: psycopg.Connection, covered: set[int]) -> list[Insight]:
         shown, shown_base = (
             (t.percent(value), t.percent(base)) if decimals == -1 else (t.number(value, decimals), t.number(base, decimals))
         )
+        above = value >= base
         insights.append(Insight(
-            "player", player, "summary", "positive", 1, "Seu melhor indicador",
-            f"Seu ponto mais forte: {label}, com {shown}. A média dos jogadores é {shown_base}.",
+            "player", player, "summary", "positive" if above else "neutral", 1,
+            "Seu ponto mais forte" if above else "Seu indicador mais perto da média",
+            f"{'Seu ponto mais forte' if above else 'O indicador em que você está mais perto da média'}: {label}, "
+            f"com {shown}. A média dos jogadores é {shown_base}.",
             matches, min(1.0, matches / 10), metric_value=value, baseline_value=base,
         ))
     return insights
@@ -292,7 +349,7 @@ def _fallback(conn: psycopg.Connection, covered: set[int]) -> list[Insight]:
 
 def build_insights(conn: psycopg.Connection) -> dict[str, int]:
     insights = (
-        _patterns(conn) + _economy(conn) + _pressure(conn) + _rotations(conn)
+        _patterns(conn) + _team_economy(conn) + _player_economy(conn) + _pressure(conn) + _rotations(conn)
         + _abilities(conn) + _strategies(conn) + _strengths(conn)
     )
     insights += _fallback(conn, {i.scope_id for i in insights if i.scope == "player"})
