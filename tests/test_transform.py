@@ -99,3 +99,22 @@ def test_rejects_match_without_winner() -> None:
     rounds = [round_result(0, "Red", "Attacker", []), round_result(1, "Blue", "Attacker", [])]
     with pytest.raises(MatchError):
         build(rounds, 1, 1)
+
+
+def test_every_death_of_a_multikill_is_traded_when_the_killer_dies() -> None:
+    kills = [
+        kill(10_000, BLUE[0], RED[0]),
+        kill(11_000, BLUE[0], RED[1]),
+        kill(12_000, RED[2], BLUE[0]),
+    ]
+    record = build([round_result(0, "Red", "Attacker", kills)], 1, 0)
+    first, second, trade = record.rounds[0].kills
+    assert trade.is_trade
+    assert (first.traded_after_ms, second.traded_after_ms) == (2_000, 1_000)
+
+
+def test_trade_in_the_same_millisecond_counts() -> None:
+    kills = [kill(10_000, BLUE[0], RED[0]), kill(10_000, RED[1], BLUE[0])]
+    record = build([round_result(0, "Red", "Attacker", kills)], 1, 0)
+    by_victim = {k.victim: k for k in record.rounds[0].kills}
+    assert by_victim[RED[0]].traded_after_ms == 0 and by_victim[BLUE[0]].is_trade
