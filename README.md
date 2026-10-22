@@ -15,6 +15,8 @@ createdb vstats
 
 ```
 uv run vstats ingest <dataset.zip ou pasta>   # pode repetir sem duplicar
+uv run vstats geometry                     # silhueta, sites e zonas; rodar depois de cada ingest
+uv run vstats export-maps mapas/           # SVG de cada mapa para revisão visual
 uv run vstats quality                      # relatório de qualidade do último run
 uv run vstats migrate
 ```
@@ -36,4 +38,4 @@ Os testes marcados com `db` usam `VSTATS_TEST_DATABASE_URL` (padrão `postgresql
 | `gist-uuids.json` | fallback de nomes |
 | `overrides.json` | lacunas preenchidas à mão; tem prioridade sobre as outras fontes |
 | `team-names.json` | nome de exibição de cada time; editar à vontade e rodar o ingest de novo |
-| `zone-labels.json` | correções de nomes de zona |
+| `zone-labels.json` | renomear zonas, por mapa: `{"Ascent": {"A/Árvore": "Tree A"}}` |

@@ -6,6 +6,8 @@ import psycopg
 import typer
 
 from vstats.config import DATABASE_URL
+from vstats.geometry.build import build_geometry
+from vstats.geometry.preview import render_map_svgs
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
 from vstats.reference.resolver import load_reference
@@ -56,3 +58,29 @@ def quality(
         ).fetchall()
     for severity, code, source_file, detail in rows:
         typer.echo(f"{severity:<7} {code:<24} {source_file}  {detail}")
+
+
+@app.command()
+def geometry(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Gera silhueta, sites e zonas de cada mapa e marca a zona de cada posição."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        results = build_geometry(conn)
+    for r in results:
+        typer.echo(
+            f"{r.name:<10} amostras {r.sample_size:>6}  silhueta {r.quality:<3}  "
+            f"zonas {r.zones:>2} ({r.zone_source})  sites {','.join(r.sites)}"
+        )
+
+
+@app.command("export-maps")
+def export_maps(
+    out: Annotated[Path, typer.Argument(help="pasta de saída dos SVGs")],
+    database_url: DatabaseOption = DATABASE_URL,
+) -> None:
+    """Exporta cada mapa como SVG (silhueta, zonas e sites) para revisão visual."""
+    out.mkdir(parents=True, exist_ok=True)
+    with psycopg.connect(database_url) as conn:
+        for slug, svg in render_map_svgs(conn):
+            (out / f"{slug}.svg").write_text(svg, encoding="utf-8")
+            typer.echo(out / f"{slug}.svg")
