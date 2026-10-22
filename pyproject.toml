@@ -11,6 +11,7 @@ dependencies = [
     "scikit-image>=0.24",
     "scikit-learn>=1.5",
     "shapely>=2.0",
+    "lightgbm>=4.5",
 ]
 
 [project.scripts]

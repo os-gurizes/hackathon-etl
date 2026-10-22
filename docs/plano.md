@@ -207,9 +207,9 @@ Curvas de eficácia por faixa de distância (0 a 10 m, 10 a 20 m, 20 a 30 m, aci
   - mapa;
   - lado;
   - placar.
-- **Modelo**: LightGBM binário, com calibração isotônica.
-- **Validação**: GroupKFold por partida e teste de generalização deixando de fora um campeonato inteiro. Métricas: Brier e log loss, com referência mínima a regressão logística só com vivos e economia.
-- **Saída**: `round_wp_events`, com a WP antes e depois de cada kill. O **impacto** de um kill ou de uma morte é o delta de WP. Todos os insights de "piora de desempenho" são medidos em delta de WP ou em rounds perdidos, nunca em K/D isolado.
+- **Modelo**: LightGBM binário com restrições monotônicas (mais vivos ou mais economia nunca reduz a chance do próprio lado) e regularização forte. A calibração isotônica é testada em cross-fitting e só é usada se melhorar o Brier.
+- **Validação**: GroupKFold por partida e teste deixando cada campeonato inteiro de fora, com referência mínima a regressão logística só com vivos, economia, plant e tempo. Resultado atual: Brier OOF 0,1292 contra 0,1337 da referência, e calibração dentro de 2 pontos em todas as faixas. Deixando o Univavá de fora (o treino fica com 20% dos dados), o modelo empata com a referência (0,1357 contra 0,1347). Nos demais campeonatos, ganha.
+- **Saída**: `round_wp_states` (WP do ataque em cada estado, out-of-fold, para a curva da partida) e `kill_impact` (WP antes e depois de cada kill). O **impacto** de um kill ou de uma morte é o delta de WP. Todos os insights de "piora de desempenho" são medidos em delta de WP ou em rounds perdidos, nunca em K/D isolado.
 
 ### 6.2 Estratégias (clustering de setups)
 

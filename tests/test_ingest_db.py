@@ -11,6 +11,7 @@ from vstats.geometry.build import build_geometry
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
 from vstats.metrics.build import build_stats
+from vstats.models.win_probability import FEATURES, build_dataset
 from vstats.positioning.heatmap import build_heatmaps
 from vstats.reference.resolver import load_reference
 
@@ -127,3 +128,13 @@ def test_economy_classifies_buys_and_flags_broken_economy(conn: psycopg.Connecti
         """SELECT f.flag, t.slug, f.won FROM analytics.economy_flags f JOIN analytics.teams t ON t.id = f.team_id"""
     ).fetchall()
     assert ("broken_economy", "team_two", False) in flags
+
+
+def test_win_probability_states_follow_kills_and_score(conn: psycopg.Connection, dataset: Path) -> None:
+    ingest(conn, dataset, load_reference())
+    data = build_dataset(conn)
+    events = [(s.event, s.attack_alive, s.defense_alive) for s in data.states]
+    assert events == [("start", 5, 5), ("kill", 5, 4), ("start", 5, 5), ("kill", 5, 4)]
+    score_columns = [FEATURES.index("attack_score"), FEATURES.index("defense_score")]
+    assert data.features[2, score_columns].tolist() == [0.0, 1.0]
+    assert data.label.tolist() == [1, 1, 0, 0]
