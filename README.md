@@ -21,6 +21,7 @@ uv run vstats stats                        # ACS, ADR, KAST, clutches, armas e a
 uv run vstats economy                      # tipo de compra por round e flags econômicos
 uv run vstats win-probability              # modelo de chance de vitória e impacto de cada kill
 uv run vstats strategies                   # setups de ataque e defesa agrupados por mapa e lado
+uv run vstats patterns                     # comportamentos repetitivos por jogador
 uv run vstats all <dataset.zip ou pasta>   # pipeline completo
 uv run vstats export-maps mapas/           # SVG de cada mapa para revisão visual
 uv run vstats quality                      # relatório de qualidade do último run
