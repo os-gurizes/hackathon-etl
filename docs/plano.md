@@ -169,18 +169,12 @@ Curvas de eficácia por faixa de distância (0 a 10 m, 10 a 20 m, 20 a 30 m, aci
 ### 5.4 Economia
 
 1. **Compra do time por round**, pela soma de `loadout_value` dos 5 jogadores: Pistol (rounds 1 e 13), Eco (abaixo de 6.000), Semi-eco (6.000 a 12.000), Meia compra (12.000 a 20.000), Full buy (20.000 ou mais). Os limites saíram do histograma real: a taxa de vitória salta de cerca de 25% para mais de 55% entre 12 e 14 mil.
-2. **Matriz de vitória por tipo de compra** (minha compra contra a do adversário). Cada round do time guarda `expected_win`, a taxa da matriz para aquele confronto de compras.
+2. **Matriz de vitória por tipo de compra** (minha compra contra a do adversário). Cada round do time guarda `expected_win`: a taxa da matriz para aquele confronto, calculada sem o próprio round. Se o confronto tem menos de 10 rounds, usa a taxa geral daquela compra.
 3. **Economia média**: loadout, gasto e saldo por time e round, em `round_team_economy`.
-4. **Flags** (`economy_flags`), cada um com `won` e `expected_win` para medir o custo em rounds:
-   - `broken_economy`: perdeu a meia compra e jogou o round seguinte em eco ou semi-eco. É o flag de maior custo no dataset (274 casos, cerca de 90 rounds abaixo do esperado). O esperado é a taxa de um full buy contra a mesma compra do adversário.
-   - `eco_without_damage`: eco com menos de 250 de dano do time.
-   - `full_buy_lost_to_eco`: derrota com compra completa contra eco.
-   - `buy_out_of_sync`: jogador comprou completo com o time em eco ou semi-eco.
-   - `saved_while_team_bought`: jogador guardou dinheiro com o time em full buy.
-   - `did_not_drop`: jogador com saldo de 3.000 ou mais enquanto um aliado jogou sem arma.
-   - `force_after_pistol_loss`: forçou a compra depois de perder o pistol.
-
-   Nem todo flag é prejudicial no dataset (`buy_out_of_sync` e `force_after_pistol_loss` vencem acima do esperado). A etapa de insights só publica como alerta os que têm custo positivo para o time ou o jogador.
+4. **Flags** (`economy_flags`, só rounds regulamentares, sem overtime):
+   - `broken_economy`: perdeu a meia compra e jogou o round seguinte em eco ou semi-eco (273 casos). `won` e `expected_win` são do round seguinte, com a compra que o time realmente fez. No dataset, a diferença é zero: o time vence o que se espera de um eco. Por isso o flag é descritivo, e o alerta vem da frequência (o time cai nisso mais que a média?), não do custo.
+   - `eco_without_damage` e `full_buy_lost_to_eco`: verdadeiros por definição em rounds perdidos, então `won` contra `expected_win` não mede custo. Também são avaliados pela frequência contra a média.
+   - `buy_out_of_sync`, `saved_while_team_bought`, `did_not_drop`, `force_after_pistol_loss`: decisões do jogador ou do time, avaliadas por `won` contra `expected_win`. No dataset, nenhuma tem custo positivo relevante.
 
 ### 5.5 Posicionamento e heatmap
 
