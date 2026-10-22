@@ -16,6 +16,7 @@ from vstats.config import PIPELINE_VERSION
 SEED = 42
 FOLDS = 5
 SITES = {"A": 1, "B": 2, "C": 3}
+SPIKE_TIMER_MS = 45_000
 FEATURES = (
     "attack_alive", "defense_alive", "alive_diff", "attack_loadout", "defense_loadout", "loadout_diff",
     "t_round_s", "planted", "t_since_plant_s", "plant_site", "map_id", "is_pistol", "attack_score", "defense_score",
@@ -41,7 +42,7 @@ PARAMS = {
 
 ROUNDS_SQL = """
     SELECT r.id, r.match_id, st.tournament_id, m.map_id, r.number, r.attack_team_id, r.defense_team_id, r.winner_side,
-           r.plant_time_ms, r.plant_site,
+           r.plant_time_ms, r.plant_site, r.defuse_time_ms,
            sum(rp.loadout_value) FILTER (WHERE rp.side = 'attack'),
            sum(rp.loadout_value) FILTER (WHERE rp.side = 'defense'),
            count(*) FILTER (WHERE rp.side = 'attack'),
@@ -83,6 +84,14 @@ class Dataset:
     tournaments: NDArray[np.int64]
 
 
+def round_end_ms(plant_time: int | None, defuse_time: int | None) -> int | None:
+    if defuse_time is not None:
+        return defuse_time
+    if plant_time is not None:
+        return plant_time + SPIKE_TIMER_MS
+    return None
+
+
 def build_dataset(conn: psycopg.Connection) -> Dataset:
     kills: dict[int, list[tuple[int, int, str]]] = defaultdict(list)
     for round_id, kill_id, t, victim_side in conn.execute(KILLS_SQL):
@@ -95,9 +104,10 @@ def build_dataset(conn: psycopg.Connection) -> Dataset:
     tournaments: list[int] = []
     score: dict[tuple[int, int], int] = defaultdict(int)
     for (round_id, match_id, tournament_id, map_id, number, attack_team, defense_team, winner_side, plant_time, plant_site,
-         attack_loadout, defense_loadout, attack_players, defense_players) in conn.execute(ROUNDS_SQL).fetchall():
+         defuse_time, attack_loadout, defense_loadout, attack_players, defense_players) in conn.execute(ROUNDS_SQL).fetchall():
+        round_end = round_end_ms(plant_time, defuse_time)
         events: list[tuple[int, int, str, int | None, str | None]] = [
-            (t, 1, "kill", kill_id, side) for kill_id, t, side in kills[round_id]
+            (t, 1, "kill", kill_id, side) for kill_id, t, side in kills[round_id] if round_end is None or t <= round_end
         ]
         if plant_time is not None:
             events.append((plant_time, 0, "plant", None, None))
@@ -113,6 +123,8 @@ def build_dataset(conn: psycopg.Connection) -> Dataset:
             if event == "plant":
                 planted_at = t
             elif victim_side is not None:
+                timeline.append(("pre_kill", kill_id, t))
+                timeline_alive.append((alive["attack"], alive["defense"], planted_at))
                 alive[victim_side] = max(alive[victim_side] - 1, 0)
             timeline.append((event, kill_id, t))
             timeline_alive.append((alive["attack"], alive["defense"], planted_at))
@@ -224,10 +236,12 @@ def _write(conn: psycopg.Connection, data: Dataset, wp: NDArray[np.float64]) -> 
            SELECT k.id, k.round_id, k.killer_id, k.victim_id, kr.side, vr.side, prev.wp_attack, cur.wp_attack,
                   CASE WHEN vr.side = 'attack' THEN cur.wp_attack - prev.wp_attack ELSE prev.wp_attack - cur.wp_attack END
            FROM analytics.round_wp_states cur
-           JOIN analytics.round_wp_states prev ON prev.round_id = cur.round_id AND prev.seq = cur.seq - 1
+           JOIN analytics.round_wp_states prev ON prev.round_id = cur.round_id AND prev.kill_id = cur.kill_id
+                                              AND prev.event = 'pre_kill'
            JOIN analytics.kills k ON k.id = cur.kill_id
            JOIN analytics.round_players vr ON vr.round_id = k.round_id AND vr.player_id = k.victim_id
-           LEFT JOIN analytics.round_players kr ON kr.round_id = k.round_id AND kr.player_id = k.killer_id"""
+           LEFT JOIN analytics.round_players kr ON kr.round_id = k.round_id AND kr.player_id = k.killer_id
+           WHERE cur.event = 'kill'"""
     )
 
 

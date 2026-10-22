@@ -50,7 +50,7 @@ class Loader:
     def finish_run(self, run_id: int, seen: int, loaded: int, skipped: int, issues: Sequence[Issue]) -> None:
         self.conn.execute(
             """UPDATE analytics.ingest_runs
-               SET finished_at = now(), files_seen = %s, files_loaded = %s, files_skipped = %s
+               SET finished_at = clock_timestamp(), files_seen = %s, files_loaded = %s, files_skipped = %s
                WHERE id = %s""",
             (seen, loaded, skipped, run_id),
         )
