@@ -248,8 +248,8 @@ Métricas por contexto contra a referência do próprio jogador: K/D, primeira a
 
 **Rotações** (`rotations`):
 - **Detecção**: o jogador é visto num site e depois em outro (passar pelo Meio conta), comparando com o último site em que foi visto.
-- **Rotação sem informação**: quando ele saiu, ainda não tinha havido kill (de qualquer time) nem plant no site de destino. É o exemplo de "recuar de um bomb sem certeza de inimigo no outro".
-- **Resultado medido**: o site abandonado recebeu plant depois que o jogador saiu? Também a vitória do round. No dataset, na defesa, o site abandonado cai 2,3 vezes mais nas rotações sem informação (7,8% contra 3,4%). A vitória do round não segue a mesma direção, porque as rotações com informação acontecem quando o time já está sob pressão; por isso a métrica principal é o site abandonado.
+- **Rotação sem informação**: até ele ser visto no site de destino, não tinha havido kill (de qualquer time) nem plant lá. Se houve, a rotação é uma reação (por exemplo, retake) e conta como informada. É o exemplo de "recuar de um bomb sem certeza de inimigo no outro".
+- **Resultado medido**: o site abandonado recebeu plant depois que o jogador saiu? Também a vitória do round. No dataset, na defesa, o site abandonado cai 3,9 vezes mais nas rotações sem informação (12,1% contra 3,1%). A vitória do round não segue a mesma direção, porque as rotações com informação acontecem quando o time já está sob pressão; por isso a métrica principal é o site abandonado.
 - **Limitação**: as amostras de posição só existem em momentos de kill, então a rotação é detectada com atraso. A UI informa isso.
 
 **Decisões de clutch**:

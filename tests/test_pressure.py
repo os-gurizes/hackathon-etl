@@ -1,4 +1,4 @@
-from vstats.models.pressure import detect_rotations, event_contexts
+from vstats.models.pressure import detect_rotations, event_contexts, is_match_point
 
 
 def test_event_contexts() -> None:
@@ -12,6 +12,18 @@ def test_event_contexts() -> None:
 def test_rotation_without_information() -> None:
     samples = [(10_000, "A"), (30_000, "B"), (40_000, "Meio")]
     assert detect_rotations(samples, site_events=[(35_000, "B")]) == [("A", "B", 10_000, 30_000, False)]
+
+
+def test_event_at_destination_while_moving_counts_as_information() -> None:
+    samples = [(45_000, "B"), (60_000, "A")]
+    assert detect_rotations(samples, site_events=[(50_000, "A")]) == [("B", "A", 45_000, 60_000, True)]
+
+
+def test_match_point() -> None:
+    assert is_match_point(12, 5) and is_match_point(3, 12)
+    assert not is_match_point(11, 11)
+    assert not is_match_point(12, 12) and not is_match_point(13, 13)
+    assert is_match_point(13, 12)
 
 
 def test_rotation_with_information_before_leaving() -> None:
