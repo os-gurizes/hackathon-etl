@@ -10,6 +10,7 @@ from vstats.geometry.build import build_geometry
 from vstats.geometry.preview import render_map_svgs
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
+from vstats.metrics.build import build_stats
 from vstats.positioning.heatmap import build_heatmaps
 from vstats.reference.resolver import load_reference
 
@@ -83,6 +84,15 @@ def heatmap(database_url: DatabaseOption = DATABASE_URL) -> None:
     typer.echo(f"heatmap: {cells} linhas de célula, {zones} linhas de zona")
 
 
+@app.command()
+def stats(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Calcula estatísticas por round, partida, arma e agente."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        counts = build_stats(conn)
+    typer.echo("  ".join(f"{table}: {count}" for table, count in counts.items()))
+
+
 @app.command("all")
 def run_all(
     source: Annotated[Path, typer.Argument(exists=True, help="pasta com os JSONs ou arquivo .zip")],
@@ -92,6 +102,7 @@ def run_all(
     ingest_command(source, database_url)
     geometry(database_url)
     heatmap(database_url)
+    stats(database_url)
 
 
 @app.command("export-maps")
