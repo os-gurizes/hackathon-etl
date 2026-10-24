@@ -12,6 +12,7 @@ from vstats.geometry.preview import render_map_svgs
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
 from vstats.metrics.build import build_stats
+from vstats.models.patterns import build_patterns
 from vstats.models.strategies import build_strategies
 from vstats.models.win_probability import train_win_probability
 from vstats.positioning.heatmap import build_heatmaps
@@ -128,6 +129,15 @@ def strategies(database_url: DatabaseOption = DATABASE_URL) -> None:
         typer.echo(f"mapa {s.map_id:>2} {s.side:<7} rounds {s.rounds:>5}  estratégias {s.clusters:>2}  sem padrão {s.noise_share:.0%}")
 
 
+@app.command()
+def patterns(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Detecta comportamentos repetitivos que pioram o desempenho de cada jogador."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        significant = build_patterns(conn)
+    typer.echo("padrões (confirmados e a observar): " + "  ".join(f"{k}: {v}" for k, v in sorted(significant.items()) if v))
+
+
 @app.command("all")
 def run_all(
     source: Annotated[Path, typer.Argument(exists=True, help="pasta com os JSONs ou arquivo .zip")],
@@ -141,6 +151,7 @@ def run_all(
     economy(database_url)
     win_probability(database_url)
     strategies(database_url)
+    patterns(database_url)
 
 
 @app.command("export-maps")

@@ -216,17 +216,22 @@ Curvas de eficácia por faixa de distância (0 a 10 m, 10 a 20 m, 20 a 30 m, aci
 
 ### 6.3 Comportamentos repetitivos que pioram o desempenho
 
-Extração de eventos comportamentais por jogador, mapa e lado:
+Por jogador, mapa e lado (mínimo de 15 rounds):
 
-| Padrão | Definição | Teste |
+| Padrão | Definição | Base de comparação |
 |---|---|---|
-| Morte recorrente na mesma zona | o jogador morre primeiro do time na zona Z em mais de N rounds | binomial contra a taxa base do mapa |
-| Duelo isolado | morte sem aliado em raio R e sem troca em 5 s | comparação com a média da função do agente |
-| Previsibilidade de rota | entropia baixa da zona de primeiro contato | percentil por função |
-| Peek sem utilitária (proxy) | first death sem nenhum cast de habilidade estimado; usa a taxa de casts por round da partida | indicativo |
-| Repetição pós-erro | o mesmo padrão aparece no round seguinte a uma morte nele | razão de recorrência |
+| `first_death_zone` | morre primeiro do round na mesma zona com frequência | taxa de first death naquela zona, mapa e lado |
+| `isolated_death` | morte sem aliado a 15 m e sem troca | mesma função, mapa e lado |
+| `repeat_after_first_death` | morre primeiro na mesma zona no round seguinte | taxa da zona no mapa e lado |
+| `predictable_route` | entropia da zona no início do round entre os 10% mais baixos da função, com first deaths acima da média | taxa de first death do mapa e lado |
 
-Ranking por impacto: um LightGBM prevê o delta de WP do round por jogador a partir dos padrões, e os valores SHAP indicam quais padrões mais custam. Só são publicados os padrões com amostra de pelo menos 15 rounds e p abaixo de 0,1 após correção de Benjamini-Hochberg.
+- **Significância**: teste binomial unilateral, com correção de Benjamini-Hochberg sobre **todos** os testes elegíveis (inclusive zonas e jogadores sem nenhuma ocorrência, que entram com p = 1). O mínimo de 3 ocorrências só filtra o que é exibido. Dois níveis em `tier`:
+  - `confirmed`: p ajustado abaixo de 0,1, acima do esperado e custo positivo. No dataset, 2 padrões.
+  - `watch` ("padrão a observar"): p bruto abaixo de 0,01, pelo menos 1,5 vez o esperado e custo de meio round ou mais. No dataset, 76. A interface mostra como indício, não como fato. Com 5 a 15 partidas por jogador e mapa, poucos padrões individuais passam numa correção estrita.
+- **Rota previsível**: entropia da zona do setup (até 40 s, incluindo a posição da vítima), normalizada pelo número de zonas do mapa.
+- **Custo** (`cost_rounds`): ocorrências acima do esperado vezes a perda média de chance de vitória (do modelo 6.1) nesses eventos. A unidade é rounds.
+- Foi usado no lugar do LightGBM com SHAP previsto antes: é mais simples de explicar ("isso custa 1,5 round") e cada padrão tem a evidência dos rounds de exemplo.
+- **Saída**: `player_patterns`, com os rounds de exemplo em `evidence_round_ids`.
 
 ### 6.4 Tendências sob pressão
 
