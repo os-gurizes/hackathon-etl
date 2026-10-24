@@ -111,7 +111,7 @@ O ETL é dono do schema `analytics`. A API é dona do schema `app` (usuários e 
 - `kills(id, round_id, t_round_ms, t_game_ms, killer_id, victim_id, weapon_id, damage_type, ability_slot, is_secondary_fire, killer_x, killer_y, victim_x, victim_y, distance, is_first_kill, is_trade, traded_within_ms)`
 - `kill_assists(kill_id, player_id)`
 - `damage_events(round_id, dealer_id, receiver_id, damage, headshots, bodyshots, legshots)`
-- `position_samples(id, kill_id, round_id, t_round_ms, player_id, side, x, y, nx, ny, view_rad, zone_id)`. São cerca de 460 mil linhas, uma por jogador vivo em cada kill.
+- `position_samples(id, kill_id, round_id, t_round_ms, player_id, side, x, y, nx, ny, view_rad, zone_id)`. São cerca de 273 mil linhas, uma por jogador vivo com posição registrada em cada kill.
 
 ### Derivados (preenchidos pelas etapas 5 a 9)
 - `zones`, `heatmap_cells`, `heatmap_zones`
@@ -139,10 +139,7 @@ Todo agregado tem as chaves de filtro `tournament_id`, `stage_id`, `map_id`, `si
 
    É esse o fundo do heatmap e da prancheta do coach.
 3. **Sites**: o centróide das `plantLocation` agrupadas por `plantSite` (A, B, C) é usado como rótulo de referência no mapa.
-4. **Zonas**:
-   - **Método**: HDBSCAN sobre as posições normalizadas de cada mapa (`min_cluster_size` ajustado para ficar entre 20 e 40 zonas), seguido de diagrama de Voronoi recortado pela silhueta, para cada zona virar um polígono.
-   - **Rótulo automático**: proximidade com os sites (`A`, `B`, `C`), `Mid` para as zonas centrais entre sites, e base de ataque ou defesa a partir da posição média de cada lado nos primeiros 15 segundos de round.
-   - **Nomes de callout**: o arquivo `zone-labels.json` permite que alguém dê o nome real (por exemplo, "Heaven A") sem reprocessar o clustering.
+4. **Zonas**: o snapshot de referência traz os callouts oficiais de cada mapa (nome, região e posição). Cada callout vira a semente de um diagrama de Voronoi recortado pela silhueta, e cada posição recebe a zona do callout mais próximo. Os nomes ficam no formato "Árvore A", "Ladrilhos do Meio". Sem callouts (caso o snapshot não seja liberado), o fallback é KMeans com 24 zonas ("Zona 1" a "Zona 24"). O arquivo `zone-labels.json` permite renomear qualquer zona sem reprocessar.
 
 ### 5.2 Estatísticas clássicas
 
@@ -152,7 +149,7 @@ Por jogador, partida, mapa, agente e lado:
 - **K/D, KDA, HS%**: `headshots / (head + body + leg)`.
 - **First kill e first death**: o menor `t_round_ms` do round.
 - **KAST**: kill, assist, sobreviveu ou foi trocado. Considera-se trocado quando o killer morre em até 5 s.
-- **Multikills** (2K a 5K) e **clutches** (1vX vencidos e disputados, X de 1 a 5).
+- **Multikills** (2K a 5K) e **clutches** (1vX vencidos e disputados, X de 1 a 5). A detecção para quando a spike explode ou é desarmada. Num 1v1, os dois jogadores contam como em clutch, como nos sites de estatística.
 - **Plants e defuses.**
 - **K/D médio por partida**, além de média, mediana e desvio por jogador.
 
@@ -171,17 +168,13 @@ Curvas de eficácia por faixa de distância (0 a 10 m, 10 a 20 m, 20 a 30 m, aci
 
 ### 5.4 Economia
 
-1. **Compra do time por round**, pela soma de `loadout_value` dos 5 jogadores: Pistol (rounds 1 e 13), Eco (abaixo de 5.000), Semi-eco (5.000 a 12.000), Force ou meia compra (12.000 a 20.000), Full buy (acima de 20.000). Os limites ficam em config e são revisados com o histograma real.
-2. **Matriz de vitória por tipo de compra** (minha compra contra a do adversário) por mapa e lado.
-3. **Economia média**: loadout, gasto e saldo médios por time, jogador e round type.
-4. **Flags de tendências econômicas prejudiciais** (`economy_flags`):
-   - *Compra dessincronizada*: um ou dois jogadores fazem full buy enquanto o time ecoa, ou o contrário.
-   - *Force após perder o pistol*, quando a taxa histórica do time nessa situação está abaixo da média.
-   - *Sobrecompra no round 2 ou 14* depois de vencer o pistol.
-   - *Saldo alto parado*: o jogador termina a compra com `remaining > 3.000` num round de full buy do time.
-   - *Eco que não gera dano*: ADR do time abaixo de um limiar em rounds de eco.
-
-   Cada flag é avaliada contra a taxa de vitória esperada (seção 6.1) para medir o custo real em rounds.
+1. **Compra do time por round**, pela soma de `loadout_value` dos 5 jogadores: Pistol (rounds 1 e 13), Eco (abaixo de 6.000), Semi-eco (6.000 a 12.000), Meia compra (12.000 a 20.000), Full buy (20.000 ou mais). Os limites saíram do histograma real: a taxa de vitória salta de cerca de 25% para mais de 55% entre 12 e 14 mil.
+2. **Matriz de vitória por tipo de compra** (minha compra contra a do adversário). Cada round do time guarda `expected_win`: a taxa da matriz para aquele confronto, calculada sem o próprio round. Se o confronto tem menos de 10 rounds, usa a taxa geral daquela compra.
+3. **Economia média**: loadout, gasto e saldo por time e round, em `round_team_economy`.
+4. **Flags** (`economy_flags`, só rounds regulamentares, sem overtime):
+   - `broken_economy`: perdeu a meia compra e jogou o round seguinte em eco ou semi-eco (273 casos). `won` e `expected_win` são do round seguinte, com a compra que o time realmente fez. No dataset, a diferença é zero: o time vence o que se espera de um eco. Por isso o flag é descritivo, e o alerta vem da frequência (o time cai nisso mais que a média?), não do custo.
+   - `eco_without_damage` e `full_buy_lost_to_eco`: verdadeiros por definição em rounds perdidos, então `won` contra `expected_win` não mede custo. Também são avaliados pela frequência contra a média.
+   - `buy_out_of_sync`, `saved_while_team_bought`, `did_not_drop`, `force_after_pistol_loss`: decisões do jogador ou do time, avaliadas por `won` contra `expected_win`. No dataset, nenhuma tem custo positivo relevante.
 
 ### 5.5 Posicionamento e heatmap
 

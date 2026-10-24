@@ -15,9 +15,17 @@ createdb vstats
 
 ```
 uv run vstats ingest <dataset.zip ou pasta>   # pode repetir sem duplicar
+uv run vstats geometry                     # silhueta, sites e zonas; rodar depois de cada ingest
+uv run vstats heatmap                      # agrega presença, kills e mortes por célula e zona
+uv run vstats stats                        # ACS, ADR, KAST, clutches, armas e agentes
+uv run vstats economy                      # tipo de compra por round e flags econômicos
+uv run vstats all <dataset.zip ou pasta>   # pipeline completo
+uv run vstats export-maps mapas/           # SVG de cada mapa para revisão visual
 uv run vstats quality                      # relatório de qualidade do último run
 uv run vstats migrate
 ```
+
+Os passos dependem uns dos outros. Depois de um `ingest`, rode os passos seguintes (ou use `vstats all`): o ingest recria os rounds e kills, e `geometry` recria as zonas, o que apaga o heatmap por zona até rodar `heatmap` de novo.
 
 ## Testes
 
@@ -36,4 +44,4 @@ Os testes marcados com `db` usam `VSTATS_TEST_DATABASE_URL` (padrão `postgresql
 | `gist-uuids.json` | fallback de nomes |
 | `overrides.json` | lacunas preenchidas à mão; tem prioridade sobre as outras fontes |
 | `team-names.json` | nome de exibição de cada time; editar à vontade e rodar o ingest de novo |
-| `zone-labels.json` | correções de nomes de zona |
+| `zone-labels.json` | renomear zonas, por mapa: `{"Ascent": {"A/Árvore": "Tree A"}}` |

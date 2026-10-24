@@ -6,8 +6,13 @@ import psycopg
 import typer
 
 from vstats.config import DATABASE_URL
+from vstats.economy.build import build_economy
+from vstats.geometry.build import build_geometry
+from vstats.geometry.preview import render_map_svgs
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
+from vstats.metrics.build import build_stats
+from vstats.positioning.heatmap import build_heatmaps
 from vstats.reference.resolver import load_reference
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -56,3 +61,69 @@ def quality(
         ).fetchall()
     for severity, code, source_file, detail in rows:
         typer.echo(f"{severity:<7} {code:<24} {source_file}  {detail}")
+
+
+@app.command()
+def geometry(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Gera silhueta, sites e zonas de cada mapa e marca a zona de cada posição."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        results = build_geometry(conn)
+    for r in results:
+        typer.echo(
+            f"{r.name:<10} amostras {r.sample_size:>6}  silhueta {r.quality:<3}  "
+            f"zonas {r.zones:>2} ({r.zone_source})  sites {','.join(r.sites)}"
+        )
+
+
+@app.command()
+def heatmap(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Agrega presença, kills e mortes por célula e por zona."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        cells, zones = build_heatmaps(conn)
+    typer.echo(f"heatmap: {cells} linhas de célula, {zones} linhas de zona")
+
+
+@app.command()
+def stats(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Calcula estatísticas por round, partida, arma e agente."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        counts = build_stats(conn)
+    typer.echo("  ".join(f"{table}: {count}" for table, count in counts.items()))
+
+
+@app.command()
+def economy(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Classifica a compra de cada time por round e marca decisões econômicas prejudiciais."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        counts = build_economy(conn)
+    typer.echo("  ".join(f"{table}: {count}" for table, count in counts.items()))
+
+
+@app.command("all")
+def run_all(
+    source: Annotated[Path, typer.Argument(exists=True, help="pasta com os JSONs ou arquivo .zip")],
+    database_url: DatabaseOption = DATABASE_URL,
+) -> None:
+    """Roda o pipeline completo."""
+    ingest_command(source, database_url)
+    geometry(database_url)
+    heatmap(database_url)
+    stats(database_url)
+    economy(database_url)
+
+
+@app.command("export-maps")
+def export_maps(
+    out: Annotated[Path, typer.Argument(help="pasta de saída dos SVGs")],
+    database_url: DatabaseOption = DATABASE_URL,
+) -> None:
+    """Exporta cada mapa como SVG (silhueta, zonas e sites) para revisão visual."""
+    out.mkdir(parents=True, exist_ok=True)
+    with psycopg.connect(database_url) as conn:
+        for slug, svg in render_map_svgs(conn):
+            (out / f"{slug}.svg").write_text(svg, encoding="utf-8")
+            typer.echo(out / f"{slug}.svg")
