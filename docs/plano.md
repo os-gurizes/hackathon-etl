@@ -247,9 +247,9 @@ Contextos de pressão marcados por round:
 Métricas por contexto contra a referência do próprio jogador: K/D, primeira ação, sobrevivência e delta de WP.
 
 **Rotações** (`rotations`):
-- **Detecção**: um defensor sai da área de um site para a do outro entre snapshots consecutivos.
-- **Rotação sem informação**: ainda não houve kill, morte ou plant perto do site de destino, nem dano registrado contra jogadores lá. É o exemplo de "recuar de um bomb sem certeza de inimigo no outro".
-- **Resultado medido**: o site abandonado caiu nos 15 s seguintes? Taxa de rotação precoce por jogador e time, e custo em WP.
+- **Detecção**: o jogador é visto num site e depois em outro (passar pelo Meio conta), comparando com o último site em que foi visto.
+- **Rotação sem informação**: até ele ser visto no site de destino, não tinha havido kill (de qualquer time) nem plant lá. Se houve, a rotação é uma reação (por exemplo, retake) e conta como informada. É o exemplo de "recuar de um bomb sem certeza de inimigo no outro".
+- **Resultado medido**: o site abandonado recebeu plant depois que o jogador saiu? Também a vitória do round. No dataset, na defesa, o site abandonado cai 3,9 vezes mais nas rotações sem informação (12,1% contra 3,1%). A vitória do round não segue a mesma direção, porque as rotações com informação acontecem quando o time já está sob pressão; por isso a métrica principal é o site abandonado.
 - **Limitação**: as amostras de posição só existem em momentos de kill, então a rotação é detectada com atraso. A UI informa isso.
 
 **Decisões de clutch**:
