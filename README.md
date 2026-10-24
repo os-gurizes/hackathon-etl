@@ -19,6 +19,7 @@ uv run vstats geometry                     # silhueta, sites e zonas; rodar depo
 uv run vstats heatmap                      # agrega presença, kills e mortes por célula e zona
 uv run vstats stats                        # ACS, ADR, KAST, clutches, armas e agentes
 uv run vstats economy                      # tipo de compra por round e flags econômicos
+uv run vstats win-probability              # modelo de chance de vitória e impacto de cada kill
 uv run vstats all <dataset.zip ou pasta>   # pipeline completo
 uv run vstats export-maps mapas/           # SVG de cada mapa para revisão visual
 uv run vstats quality                      # relatório de qualidade do último run

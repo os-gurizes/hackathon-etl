@@ -191,19 +191,19 @@ Curvas de eficácia por faixa de distância (0 a 10 m, 10 a 20 m, 20 a 30 m, aci
 
 ### 6.1 Win probability por estado do round (base para medir impacto)
 
-- **Unidade**: cada evento de kill e o estado após ele.
+- **Unidade**: início do round, plant, e para cada kill dois estados: logo antes (mesmos vivos, relógio do kill) e logo depois. Kills depois do defuse ou da explosão da spike não entram.
 - **Features**:
   - vivos de cada lado e a diferença numérica;
-  - soma de loadout de cada lado e tipo de compra;
+  - soma de loadout de cada lado;
   - tempo do round;
   - spike plantada e tempo desde o plant;
   - site;
   - mapa;
   - lado;
   - placar.
-- **Modelo**: LightGBM binário, com calibração isotônica.
-- **Validação**: GroupKFold por partida e teste de generalização deixando de fora um campeonato inteiro. Métricas: Brier e log loss, com referência mínima a regressão logística só com vivos e economia.
-- **Saída**: `round_wp_events`, com a WP antes e depois de cada kill. O **impacto** de um kill ou de uma morte é o delta de WP. Todos os insights de "piora de desempenho" são medidos em delta de WP ou em rounds perdidos, nunca em K/D isolado.
+- **Modelo**: LightGBM binário com restrições monotônicas (mais vivos ou mais economia nunca reduz a chance do próprio lado) e regularização forte. A calibração isotônica é testada em cross-fitting e só é usada se melhorar o Brier.
+- **Validação**: GroupKFold por partida e teste deixando cada campeonato inteiro de fora, com referência mínima a regressão logística só com vivos, economia, plant e tempo. Resultado atual (103.617 estados): Brier OOF 0,1368 contra 0,1408 da referência, e calibração dentro de 2 pontos. Deixando o Univavá de fora (o treino fica com 20% dos dados), o modelo fica um pouco atrás da referência (0,1445 contra 0,1419). Nos demais campeonatos, ganha.
+- **Saída**: `round_wp_states` (WP do ataque em cada estado, out-of-fold, para a curva da partida) e `kill_impact` (WP antes e depois de cada kill). O **impacto** de um kill ou de uma morte é o delta de WP. Todos os insights de "piora de desempenho" são medidos em delta de WP ou em rounds perdidos, nunca em K/D isolado.
 
 ### 6.2 Estratégias (clustering de setups)
 

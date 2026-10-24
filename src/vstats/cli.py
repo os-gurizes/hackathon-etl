@@ -12,6 +12,7 @@ from vstats.geometry.preview import render_map_svgs
 from vstats.ingest import ingest
 from vstats.load.migrate import apply_migrations
 from vstats.metrics.build import build_stats
+from vstats.models.win_probability import train_win_probability
 from vstats.positioning.heatmap import build_heatmaps
 from vstats.reference.resolver import load_reference
 
@@ -103,6 +104,19 @@ def economy(database_url: DatabaseOption = DATABASE_URL) -> None:
     typer.echo("  ".join(f"{table}: {count}" for table, count in counts.items()))
 
 
+@app.command("win-probability")
+def win_probability(database_url: DatabaseOption = DATABASE_URL) -> None:
+    """Treina o modelo de probabilidade de vitória por estado do round e calcula o impacto de cada kill."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        apply_migrations(conn)
+        report = train_win_probability(conn)
+    typer.echo(f"run {report.run_id}: {report.states} estados, escolhido {report.chosen}")
+    for name, values in report.metrics.items():
+        typer.echo(f"  {name:<18} " + "  ".join(f"{k} {v}" for k, v in values.items()))
+    for tournament, values in report.holdout.items():
+        typer.echo(f"  holdout torneio {tournament}: " + "  ".join(f"{k} {v}" for k, v in values.items()))
+
+
 @app.command("all")
 def run_all(
     source: Annotated[Path, typer.Argument(exists=True, help="pasta com os JSONs ou arquivo .zip")],
@@ -114,6 +128,7 @@ def run_all(
     heatmap(database_url)
     stats(database_url)
     economy(database_url)
+    win_probability(database_url)
 
 
 @app.command("export-maps")
